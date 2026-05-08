@@ -4,29 +4,14 @@ import type { CompositeScreenProps } from '@react-navigation/native';
 
 export type RootStackParamList = {
   Main: undefined;
-  CameraDetail: { cameraId: string };
-  CameraSettings: { cameraId: string };
-  PTZControl: { cameraId: string };
-  RecordingPlayer: { recordingId: string };
-  RecordingSettings: { cameraId: string };
-  AutomationEditor: { automationId?: string };
-  AddCamera: undefined;
-  AddPreset: { cameraId: string };
-  AddTour: { cameraId: string };
-  Settings: undefined;
-  About: undefined;
+  CameraView: { cameraId: string };
 };
 
 export type MainTabParamList = {
-  Live: undefined;
+  Home: undefined;
+  Cameras: undefined;
   Recordings: undefined;
-  Automation: undefined;
   Settings: undefined;
-};
-
-export type LiveStackParamList = {
-  LiveGrid: undefined;
-  CameraView: { cameraId: string };
 };
 
 export type RootStackScreenProps<T extends keyof RootStackParamList> =
@@ -35,7 +20,7 @@ export type RootStackScreenProps<T extends keyof RootStackParamList> =
 export type MainTabScreenProps<T extends keyof MainTabParamList> =
   CompositeScreenProps<
     BottomTabScreenProps<MainTabParamList, T>,
-    NativeStackScreenProps<RootStackParamList>
+    RootStackScreenProps<keyof RootStackParamList>
   >;
 
 declare global {

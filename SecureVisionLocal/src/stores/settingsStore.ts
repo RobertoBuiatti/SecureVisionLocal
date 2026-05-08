@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 
 interface SettingsState {
+  theme: 'light' | 'dark';
+  language: string;
   notifications: boolean;
   autoRecord: boolean;
   darkMode: boolean;
@@ -10,6 +12,8 @@ interface SettingsState {
   storageUsed: number;
   storageTotal: number;
 
+  setTheme: (theme: 'light' | 'dark') => void;
+  setLanguage: (language: string) => void;
   toggleNotifications: () => void;
   toggleAutoRecord: () => void;
   toggleDarkMode: () => void;
@@ -20,6 +24,8 @@ interface SettingsState {
 }
 
 export const useSettingsStore = create<SettingsState>((set) => ({
+  theme: 'light',
+  language: 'pt-BR',
   notifications: true,
   autoRecord: true,
   darkMode: true,
@@ -29,6 +35,8 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   storageUsed: 45.2,
   storageTotal: 100,
 
+  setTheme: (theme) => set({ theme }),
+  setLanguage: (language) => set({ language }),
   toggleNotifications: () =>
     set((state) => ({ notifications: !state.notifications })),
 

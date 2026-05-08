@@ -1,97 +1,124 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# SecureVision Local
 
-# Getting Started
+> Sistema de monitoramento e segurança local 100% offline para Android/iOS
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+[![React Native](https://img.shields.io/badge/React%20Native-0.85.3-61DAFB?style=flat&logo=react)](https://reactnative.dev)
+[![Platform](https://img.shields.io/badge/Platform-Android%20%7C%20iOS-000000?style=flat)
+[![License](https://img.shields.io/badge/License-MIT-000000?style=flat)](LICENSE)
 
-## Step 1: Start Metro
+## 📱 Visão Geral
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+O **SecureVision Local** é um aplicativo de monitoramento de câmeras de segurança que funciona 100% offline, sem dependência de serviços em nuvem. Total controle do usuário sobre seus dados, gravações e automações.
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+### ✨ Diferenciais
 
-```sh
-# Using npm
-npm start
+| Característica | Outros Apps | SecureVision Local |
+|----------------|-------------|------------------|
+| Armazenamento | Nuvem | 100% Local |
+| Acesso | Limitado | Total |
+| Custos | Assinatura mensal | Grátis |
+| Privacidade | Serviços externos | Total controle |
 
-# OR using Yarn
-yarn start
-```
+## 🚀 Funcionalidades Principais
 
-## Step 2: Build and run your app
+### Monitoramento
+- Visualização em tempo real de múltiplas câmeras
+- Suporte a protocolos RTSP, ONVIF, HTTP Stream, MJPEG
+- Grades de visualização: 1x1, 2x2, 3x3, 4x4
+- Controle PTZ completo com tours e presets
+- Zoom digital e pan/tilt
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+### Gravação
+- Gravação contínua, por movimento ou manual
+- Armazenamento local criptografado
+- Política de retenção configurável
+- Busca por timeline com miniaturas
 
-### Android
+### Inteligência Local
+- Detecção de movimento com zonas de interesse
+- Detecção de pessoas, veículos, animais
+- Alertas em tempo real
 
-```sh
-# Using npm
+### Automação
+- Regras de automação personalizáveis
+- Integração com dispositivos IoT
+- API REST local para integração
+
+## 📦 Instalação
+
+### Pré-requisitos
+
+- Node.js >= 22.11.0
+- React Native CLI
+- Android Studio (Android) / Xcode (iOS)
+
+### Passo a passo
+
+```bash
+# Clone o repositório
+git clone https://github.com/seu-repo/SecureVisionLocal.git
+cd SecureVisionLocal/SecureVisionLocal
+
+# Instale as dependências
+npm install
+
+# Execute no Android
 npm run android
 
-# OR using Yarn
-yarn android
-```
-
-### iOS
-
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
-
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
-
-```sh
-bundle install
-```
-
-Then, and every time you update your native dependencies, run:
-
-```sh
-bundle exec pod install
-```
-
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
-
-```sh
-# Using npm
+# Execute no iOS
 npm run ios
-
-# OR using Yarn
-yarn ios
 ```
 
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
+Para instruções detalhadas, veja [INSTALL.md](INSTALL.md).
 
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
+## 📂 Estrutura do Projeto
 
-## Step 3: Modify your app
+```
+SecureVisionLocal/
+├── src/
+│   ├── app/              # App principal
+│   ├── features/         # Funcionalidades por domínio
+│   ├── shared/          # Código compartilhado
+│   │   ├── components/   # Componentes genéricos
+│   │   ├── hooks/        # Hooks genéricos
+│   │   ├── utils/        # Funções utilitárias
+│   │   └── types/        # Tipos globais
+│   └── services/         # Serviços de infraestrutura
+├── android/              # Projeto Android nativo
+└── ios/                 # Projeto iOS nativo
+```
 
-Now that you have successfully run the app, let's make changes!
+Consulte [ARCHITECTURE.md](ARCHITECTURE.md) para detalhes da arquitetura.
 
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
+## 🛠️ Stack Tecnológica
 
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
+| Componente | Tecnologia |
+|------------|------------|
+| Framework | React Native 0.85.3 |
+| Estado | Zustand |
+| Navegação | React Navigation v7 |
+| UI | React Native Paper + Vector Icons |
+| Armazenamento | AsyncStorage + react-native-fs |
+| Video | react-native-vision-camera |
+| ML | TensorFlow Lite |
 
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
+## 📄 Documentação
 
-## Congratulations! :tada:
+| Documento | Descrição |
+|----------|------------|
+| [INSTALL.md](INSTALL.md) | Guia de instalação |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Arquitetura técnica |
+| [API.md](API.md) | Referência da API |
+| [CHANGELOG.md](CHANGELOG.md) | Histórico de mudanças |
 
-You've successfully run and modified your React Native App. :partying_face:
+## 🤝 Contribuição
 
-### Now what?
+Quer contribuir? See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
+## 📝 Licença
 
-# Troubleshooting
+MIT License - see [LICENSE](LICENSE).
 
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
+---
 
-# Learn More
-
-To learn more about React Native, take a look at the following resources:
-
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+**SecureVision Local** - Monitoramento sem limites, sem mensais.
