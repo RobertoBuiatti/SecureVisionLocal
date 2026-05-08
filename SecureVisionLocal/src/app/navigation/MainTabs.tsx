@@ -1,6 +1,6 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { colors } from '../theme';
+import { useColors } from '../theme';
 import { MainTabParamList } from './types';
 import { LiveScreen } from '../../features/cameras/screens/LiveScreen';
 import { RecordingsScreen } from '../../features/recording/screens/RecordingsScreen';
@@ -11,6 +11,8 @@ import { Icon } from '../../shared/components/Icon';
 const Tab = createBottomTabNavigator<MainTabParamList>();
 
 export function MainTabs(): React.ReactElement {
+  const colors = useColors();
+
   return (
     <Tab.Navigator
       screenOptions={{

@@ -43,18 +43,47 @@ src/
 │   │   └── index.ts        # Barrel exports
 │   │
 │   ├── components/         # Componentes genéricos reutilizáveis
+│   │   └── Icon.tsx        # Componente de ícone
+│   │
 │   ├── hooks/             # Hooks customizados genéricos
+│   │   ├── index.ts       # Exports principais
+│   │   ├── useAsync.ts    # Hook para operações assíncronas
+│   │   ├── useDebounce.ts # Hook para debounce
+│   │   ├── useNetwork.ts # Hook para estado de rede
+│   │   └── useStorage.ts # Hook para storage local
+│   │
 │   ├── utils/            # Funções utilitárias
+│   │   ├── index.ts      # Exports principais
+│   │   ├── formatters.ts # Funções de formatação
+│   │   └── validators.ts # Funções de validação
+│   │
 │   └── constants/        # Constantes globais
+│       └── index.ts     # Constantes da aplicação
 │
 ├── features/              # Funcionalidades por domínio
 │   │                   # (Pré-definido na documentação)
 │   │
 ├── services/            # Serviços de infraestrutura
 │   ├── api/           # Cliente HTTP/Axios
-│   ├── database/       # Acesso SQLite
+│   │   ├── client.ts  # Cliente Axios
+│   │   ├── endpoints.ts # Endpoints da API
+│   │   └── index.ts   # Exports
+│   │
+│   ├── database/      # Banco de dados local (AsyncStorage)
+│   │   ├── databaseService.ts # Serviço de banco
+│   │   └── index.ts  # Exports
+│   │
 │   ├── storage/       # Armazenamento local
-│   └── notifications/ # Sistema de notificações
+│   │   ├── storageService.ts
+│   │   └── index.ts
+│   │
+│   ├── notifications/ # Sistema de notificações
+│   │   ├── notificationService.ts
+│   │   └── index.ts
+│   │
+│   ├── streaming/     # Streaming de vídeo
+│   ├── recording/     # Gravação
+│   └── motionDetection/ # Detecção de movimento
 │
 └── stores/            # Stores Zustand (Estado global)
     ├── index.ts       # Exports principais
@@ -315,6 +344,18 @@ Baseado na documentação de planejamento:
 2. **Fase 2**: Monitoramento - Visualização + Gravação
 3. **Fase 3**: Inteligência - ML local
 4. **Fase 4**: Automação - Regras e IoT
+
+## Documentação
+
+O projeto possui a seguinte documentação:
+
+| Documento | Descrição |
+|-----------|-----------|
+| [README.md](../README.md) | Visão geral do projeto |
+| [INSTALL.md](../INSTALL.md) | Guia de instalação |
+| [API.md](../API.md) | Referência da API REST |
+| [CHANGELOG.md](../CHANGELOG.md) | Histórico de mudanças |
+| [CONTRIBUTING.md](../CONTRIBUTING.md) | Guia de contribuição |
 
 ## Referências
 

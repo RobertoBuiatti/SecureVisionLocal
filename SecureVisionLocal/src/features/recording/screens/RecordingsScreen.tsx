@@ -8,7 +8,7 @@ import {
   StatusBar,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors, spacing } from '@app/theme';
+import { useColors, spacing } from '@app/theme';
 import { Icon } from '@shared/components/Icon';
 
 interface Recording {
@@ -22,6 +22,7 @@ interface Recording {
 
 export function RecordingsScreen(): React.ReactElement {
   const insets = useSafeAreaInsets();
+  const colors = useColors();
   const [recordings] = useState<Recording[]>([
     {
       id: '1',
@@ -34,78 +35,95 @@ export function RecordingsScreen(): React.ReactElement {
     {
       id: '2',
       cameraName: 'Garagem',
-      date: '07/05/2026 12:00',
-      duration: '01:30:00',
-      size: '850 MB',
+      date: '07/05/2026 12:15',
+      duration: '00:45:23',
+      size: '450 MB',
       hasMotion: false,
     },
     {
       id: '3',
-      cameraName: 'Fundos',
-      date: '06/05/2026 22:15',
-      duration: '03:45:00',
-      size: '2.1 GB',
+      cameraName: 'Portão',
+      date: '06/05/2026 22:00',
+      duration: '08:00:00',
+      size: '4.1 GB',
       hasMotion: true,
+    },
+    {
+      id: '4',
+      cameraName: 'Entrada Principal',
+      date: '06/05/2026 18:30',
+      duration: '01:30:00',
+      size: '800 MB',
+      hasMotion: true,
+    },
+    {
+      id: '5',
+      cameraName: 'Jardim',
+      date: '05/05/2026 14:00',
+      duration: '03:45:12',
+      size: '2.0 GB',
+      hasMotion: false,
     },
   ]);
 
   const renderRecording = ({ item }: { item: Recording }) => (
-    <TouchableOpacity style={styles.recordingCard} activeOpacity={0.8}>
-      <View style={styles.thumbnail}>
-        <Text style={styles.thumbnailIcon}>🎬</Text>
+    <TouchableOpacity
+      style={[styles.recordingCard, { backgroundColor: colors.surface }]}
+      onPress={() => {}}
+    >
+      <View style={[styles.thumbnail, { backgroundColor: colors.backgroundLight }]}>
+        <Icon name="video" size={24} color={colors.textMuted} />
       </View>
       <View style={styles.recordingInfo}>
-        <Text style={styles.cameraName}>{item.cameraName}</Text>
-        <Text style={styles.dateTime}>{item.date}</Text>
-        <View style={styles.metadata}>
-          <View style={styles.metaItem}>
-            <Icon name="clock" size={12} color={colors.textMuted} />
-            <Text style={styles.metaText}>{item.duration}</Text>
-          </View>
-          <View style={styles.metaItem}>
-            <Icon name="folder" size={12} color={colors.textMuted} />
-            <Text style={styles.metaText}>{item.size}</Text>
-          </View>
+        <Text style={[styles.recordingName, { color: colors.text }]}>
+          {item.cameraName}
+        </Text>
+        <Text style={[styles.recordingDate, { color: colors.textMuted }]}>
+          {item.date}
+        </Text>
+        <View style={styles.recordingMeta}>
+          <Text style={[styles.recordingDuration, { color: colors.textMuted }]}>
+            {item.duration}
+          </Text>
+          <Text style={[styles.recordingSize, { color: colors.textMuted }]}>
+            {item.size}
+          </Text>
           {item.hasMotion && (
-            <View style={styles.motionBadge}>
-              <Icon name="warning" size={10} color={colors.warning} />
-              <Text style={styles.motionText}>Movimento</Text>
+            <View style={[styles.motionBadge, { backgroundColor: colors.warning + '20' }]}>
+              <Text style={[styles.motionText, { color: colors.warning }]}>Motion</Text>
             </View>
           )}
         </View>
       </View>
-      <TouchableOpacity style={styles.playButton}>
-        <Icon name="play-circle" size={32} color={colors.secondary} />
+      <TouchableOpacity style={[styles.playButton, { backgroundColor: colors.primary }]}>
+        <Icon name="play" size={16} color={colors.text} />
       </TouchableOpacity>
     </TouchableOpacity>
   );
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <StatusBar barStyle="light-content" backgroundColor={colors.background} />
-
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Gravações</Text>
-        <TouchableOpacity style={styles.filterButton}>
-          <Icon name="search" size={20} color={colors.textSecondary} />
-        </TouchableOpacity>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Gravações</Text>
       </View>
-
-      <View style={styles.storageInfo}>
-        <Text style={styles.storageText}>
-          45.2 GB / 100 GB usado
-        </Text>
-        <View style={styles.storageBar}>
-          <View style={[styles.storageFill, { width: '45.2%' }]} />
-        </View>
-      </View>
-
       <FlatList
         data={recordings}
-        keyExtractor={item => item.id}
+        keyExtractor={(item) => item.id}
         renderItem={renderRecording}
         contentContainerStyle={styles.list}
         showsVerticalScrollIndicator={false}
+        ListEmptyComponent={
+          <View style={styles.emptyContainer}>
+            <Icon name="video" size={64} color={colors.textMuted} />
+            <Text style={[styles.emptyText, { color: colors.text }]}>
+              Nenhuma gravação encontrada
+            </Text>
+            <Text style={[styles.emptySubtext, { color: colors.textMuted }]}>
+              As gravações aparecerão aqui
+            </Text>
+          </View>
+        }
       />
     </View>
   );
@@ -114,111 +132,84 @@ export function RecordingsScreen(): React.ReactElement {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     paddingHorizontal: spacing.screenPadding,
     paddingVertical: spacing.md,
   },
   headerTitle: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: colors.text,
-  },
-  filterButton: {
-    padding: spacing.xs,
-  },
-  storageInfo: {
-    marginHorizontal: spacing.screenPadding,
-    marginBottom: spacing.md,
-    backgroundColor: colors.surface,
-    padding: spacing.md,
-    borderRadius: 12,
-  },
-  storageText: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    marginBottom: spacing.xs,
-  },
-  storageBar: {
-    height: 6,
-    backgroundColor: colors.backgroundLight,
-    borderRadius: 3,
-    overflow: 'hidden',
-  },
-  storageFill: {
-    height: '100%',
-    backgroundColor: colors.secondary,
-    borderRadius: 3,
   },
   list: {
     padding: spacing.screenPadding,
   },
   recordingCard: {
     flexDirection: 'row',
-    backgroundColor: colors.surface,
     borderRadius: 12,
+    padding: spacing.sm,
     marginBottom: spacing.md,
-    overflow: 'hidden',
+    alignItems: 'center',
   },
   thumbnail: {
     width: 80,
     height: 60,
-    backgroundColor: colors.backgroundLight,
+    borderRadius: 8,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  thumbnailIcon: {
-    fontSize: 24,
   },
   recordingInfo: {
     flex: 1,
-    padding: spacing.sm,
-    justifyContent: 'center',
+    marginLeft: spacing.sm,
   },
-  cameraName: {
-    fontSize: 14,
+  recordingName: {
+    fontSize: 16,
     fontWeight: '600',
-    color: colors.text,
-    marginBottom: 2,
   },
-  dateTime: {
+  recordingDate: {
+    fontSize: 14,
+    marginTop: 2,
+  },
+  recordingMeta: {
+    flexDirection: 'row',
+    marginTop: spacing.xs,
+  },
+  recordingDuration: {
     fontSize: 12,
-    color: colors.textMuted,
-    marginBottom: 4,
+    marginRight: spacing.sm,
   },
-  metadata: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  metaItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginRight: spacing.md,
-  },
-  metaText: {
-    fontSize: 11,
-    color: colors.textMuted,
-    marginLeft: 4,
+  recordingSize: {
+    fontSize: 12,
+    marginRight: spacing.sm,
   },
   motionBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.backgroundLight,
-    paddingHorizontal: 6,
+    paddingHorizontal: spacing.sm,
     paddingVertical: 2,
     borderRadius: 4,
   },
   motionText: {
     fontSize: 10,
-    color: colors.warning,
-    marginLeft: 2,
+    fontWeight: '600',
   },
   playButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     justifyContent: 'center',
-    paddingRight: spacing.md,
+    alignItems: 'center',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 80,
+  },
+  emptyText: {
+    fontSize: 18,
+    fontWeight: '500',
+    marginTop: spacing.md,
+  },
+  emptySubtext: {
+    fontSize: 14,
+    marginTop: spacing.xs,
   },
 });

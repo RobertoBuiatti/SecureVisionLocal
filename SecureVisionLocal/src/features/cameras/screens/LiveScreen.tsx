@@ -9,8 +9,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { colors, spacing } from '@app/theme';
-import { Camera } from '@shared/types';
+import { useColors, spacing } from '@app/theme';
+import type { Camera } from '@shared/types';
 import { Icon } from '@shared/components/Icon';
 import { useCameraStore } from '../../../stores';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -21,6 +21,7 @@ type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 export function LiveScreen(): React.ReactElement {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation<NavigationProp>();
+  const colors = useColors();
   const cameras = useCameraStore((state) => state.cameras);
 
   const getStatusColor = (status: Camera['status']) => {
@@ -44,21 +45,21 @@ export function LiveScreen(): React.ReactElement {
 
   const renderCameraCard = ({ item }: { item: Camera }) => (
     <TouchableOpacity
-      style={styles.cameraCard}
+      style={[styles.cameraCard, { backgroundColor: colors.surface }]}
       activeOpacity={0.8}
       onPress={() => handleCameraPress(item.id)}
     >
-      <View style={styles.cameraPreview}>
+      <View style={[styles.cameraPreview, { backgroundColor: colors.backgroundLight }]}>
         <Text style={styles.previewPlaceholder}>📹</Text>
         {item.isRecording && (
           <View style={styles.recordingIndicator}>
             <Icon name="record-circle" size={12} color={colors.recording} />
-            <Text style={styles.recordingText}>REC</Text>
+            <Text style={[styles.recordingText, { color: colors.recording }]}>REC</Text>
           </View>
         )}
       </View>
       <View style={styles.cameraInfo}>
-        <Text style={styles.cameraName}>{item.name}</Text>
+        <Text style={[styles.cameraName, { color: colors.text }]}>{item.name}</Text>
         <View style={styles.cameraStatus}>
           <View
             style={[
@@ -66,7 +67,7 @@ export function LiveScreen(): React.ReactElement {
               { backgroundColor: getStatusColor(item.status) },
             ]}
           />
-          <Text style={styles.statusText}>
+          <Text style={[styles.statusText, { color: colors.textMuted }]}>
             {item.status === 'online' ? 'Online' : 'Offline'}
           </Text>
           {item.hasPTZ && (
@@ -78,11 +79,11 @@ export function LiveScreen(): React.ReactElement {
   );
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
       <StatusBar barStyle="light-content" backgroundColor={colors.background} />
 
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>SecureVision</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>SecureVision</Text>
         <TouchableOpacity
           style={styles.addButton}
           onPress={() => navigation.navigate('AddCamera')}
@@ -91,24 +92,24 @@ export function LiveScreen(): React.ReactElement {
         </TouchableOpacity>
       </View>
 
-      <View style={styles.stats}>
+      <View style={[styles.stats, { backgroundColor: colors.surface }]}>
         <View style={styles.statItem}>
-          <Text style={styles.statValue}>
+          <Text style={[styles.statValue, { color: colors.secondary }]}>
             {cameras.filter((c) => c.status === 'online').length}
           </Text>
-          <Text style={styles.statLabel}>Online</Text>
+          <Text style={[styles.statLabel, { color: colors.textMuted }]}>Online</Text>
         </View>
         <View style={styles.statItem}>
-          <Text style={styles.statValue}>
+          <Text style={[styles.statValue, { color: colors.secondary }]}>
             {cameras.filter((c) => c.isRecording).length}
           </Text>
-          <Text style={styles.statLabel}>Gravando</Text>
+          <Text style={[styles.statLabel, { color: colors.textMuted }]}>Gravando</Text>
         </View>
         <View style={styles.statItem}>
-          <Text style={styles.statValue}>
+          <Text style={[styles.statValue, { color: colors.secondary }]}>
             {cameras.filter((c) => c.status === 'offline').length}
           </Text>
-          <Text style={styles.statLabel}>Offline</Text>
+          <Text style={[styles.statLabel, { color: colors.textMuted }]}>Offline</Text>
         </View>
       </View>
 
@@ -127,31 +128,28 @@ export function LiveScreen(): React.ReactElement {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: spacing.screenPadding,
-    paddingVertical: spacing.md,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
   },
   headerTitle: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: colors.text,
   },
   addButton: {
-    padding: spacing.xs,
+    padding: 4,
   },
   stats: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    paddingVertical: spacing.md,
-    marginHorizontal: spacing.screenPadding,
-    backgroundColor: colors.surface,
+    paddingVertical: 16,
+    marginHorizontal: 16,
     borderRadius: 12,
-    marginBottom: spacing.md,
+    marginBottom: 16,
   },
   statItem: {
     alignItems: 'center',
@@ -159,26 +157,22 @@ const styles = StyleSheet.create({
   statValue: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: colors.secondary,
   },
   statLabel: {
     fontSize: 12,
-    color: colors.textMuted,
     marginTop: 4,
   },
   grid: {
-    padding: spacing.screenPadding,
+    padding: 16,
   },
   cameraCard: {
     flex: 1,
-    margin: spacing.xs,
-    backgroundColor: colors.surface,
+    margin: 4,
     borderRadius: 12,
     overflow: 'hidden',
   },
   cameraPreview: {
     aspectRatio: 16 / 9,
-    backgroundColor: colors.backgroundLight,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -187,28 +181,25 @@ const styles = StyleSheet.create({
   },
   recordingIndicator: {
     position: 'absolute',
-    top: spacing.xs,
-    right: spacing.xs,
+    top: 4,
+    right: 4,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: colors.overlay,
-    paddingHorizontal: spacing.xs,
+    paddingHorizontal: 4,
     paddingVertical: 2,
     borderRadius: 4,
   },
   recordingText: {
     fontSize: 10,
-    color: colors.recording,
     fontWeight: 'bold',
     marginLeft: 4,
   },
   cameraInfo: {
-    padding: spacing.sm,
+    padding: 8,
   },
   cameraName: {
     fontSize: 14,
     fontWeight: '600',
-    color: colors.text,
     marginBottom: 4,
   },
   cameraStatus: {
@@ -219,11 +210,10 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    marginRight: spacing.xs,
+    marginRight: 4,
   },
   statusText: {
     fontSize: 12,
-    color: colors.textMuted,
     flex: 1,
   },
 });

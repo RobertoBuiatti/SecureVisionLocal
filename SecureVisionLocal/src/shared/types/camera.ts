@@ -26,6 +26,7 @@ export interface Camera {
 export interface CameraStream {
   cameraId: string;
   isPlaying: boolean;
+  isRecording: boolean;
   quality: 'low' | 'medium' | 'high';
   currentFps: number;
   bitrate: number;

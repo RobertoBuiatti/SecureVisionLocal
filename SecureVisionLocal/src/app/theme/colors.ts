@@ -8,8 +8,10 @@ export const colors = {
   secondaryLight: '#4DB6AC',
 
   background: '#0A0F14',
+  backgroundDark: '#050810',
   backgroundLight: '#1A2332',
   surface: '#151D28',
+  surfaceDark: '#0D1520',
   surfaceLight: '#1F2937',
 
   error: '#FF5252',
@@ -19,7 +21,9 @@ export const colors = {
   info: '#2196F3',
 
   text: '#FFFFFF',
+  textDark: '#E0E0E0',
   textSecondary: '#B0BEC5',
+  textSecondaryDark: '#9E9E9E',
   textMuted: '#78909C',
   textDisabled: '#546E7A',
 

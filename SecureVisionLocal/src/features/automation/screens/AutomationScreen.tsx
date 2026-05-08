@@ -9,12 +9,13 @@ import {
   Switch,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors, spacing } from '@app/theme';
-import { Automation } from '@shared/types/automation';
+import { useColors, spacing } from '@app/theme';
+import type { Automation } from '@shared/types/automation';
 import { Icon } from '@shared/components/Icon';
 
 export function AutomationScreen(): React.ReactElement {
   const insets = useSafeAreaInsets();
+  const colors = useColors();
   const [automations, setAutomations] = useState<Automation[]>([
     {
       id: '1',
@@ -80,9 +81,9 @@ export function AutomationScreen(): React.ReactElement {
   };
 
   const renderAutomation = ({ item }: { item: Automation }) => (
-    <View style={styles.automationCard}>
+    <View style={[styles.automationCard, { backgroundColor: colors.surface }]}>
       <View style={styles.automationHeader}>
-        <View style={styles.triggerIcon}>
+        <View style={[styles.triggerIcon, { backgroundColor: colors.backgroundLight }]}>
           <Icon
             name={getTriggerIcon(item.trigger.type)}
             size={20}
@@ -90,8 +91,8 @@ export function AutomationScreen(): React.ReactElement {
           />
         </View>
         <View style={styles.automationInfo}>
-          <Text style={styles.automationName}>{item.name}</Text>
-          <Text style={styles.automationDescription}>{item.description}</Text>
+          <Text style={[styles.automationName, { color: colors.text }]}>{item.name}</Text>
+          <Text style={[styles.automationDescription, { color: colors.textMuted }]}>{item.description}</Text>
         </View>
         <Switch
           value={item.enabled}
@@ -100,8 +101,8 @@ export function AutomationScreen(): React.ReactElement {
           thumbColor={colors.text}
         />
       </View>
-      <View style={styles.automationFooter}>
-        <Text style={styles.triggerCount}>
+      <View style={[styles.automationFooter, { borderTopColor: colors.border }]}>
+        <Text style={[styles.triggerCount, { color: colors.textMuted }]}>
           Disparado {item.triggerCount} vezes
         </Text>
         <TouchableOpacity style={styles.editButton}>
@@ -112,34 +113,34 @@ export function AutomationScreen(): React.ReactElement {
   );
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View style={[styles.container, { paddingTop: insets.top, backgroundColor: colors.background }]}>
       <StatusBar barStyle="light-content" backgroundColor={colors.background} />
 
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Automação</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>Automação</Text>
         <TouchableOpacity style={styles.addButton}>
           <Icon name="plus-circle" size={28} color={colors.secondary} />
         </TouchableOpacity>
       </View>
 
-      <View style={styles.stats}>
+      <View style={[styles.stats, { backgroundColor: colors.surface }]}>
         <View style={styles.statItem}>
-          <Text style={styles.statValue}>
+          <Text style={[styles.statValue, { color: colors.secondary }]}>
             {automations.filter(a => a.enabled).length}
           </Text>
-          <Text style={styles.statLabel}>Ativas</Text>
+          <Text style={[styles.statLabel, { color: colors.textMuted }]}>Ativas</Text>
         </View>
         <View style={styles.statItem}>
-          <Text style={styles.statValue}>
+          <Text style={[styles.statValue, { color: colors.secondary }]}>
             {automations.filter(a => !a.enabled).length}
           </Text>
-          <Text style={styles.statLabel}>Inativas</Text>
+          <Text style={[styles.statLabel, { color: colors.textMuted }]}>Inativas</Text>
         </View>
         <View style={styles.statItem}>
-          <Text style={styles.statValue}>
+          <Text style={[styles.statValue, { color: colors.secondary }]}>
             {automations.reduce((acc, a) => acc + a.triggerCount, 0)}
           </Text>
-          <Text style={styles.statLabel}>Disparos</Text>
+          <Text style={[styles.statLabel, { color: colors.textMuted }]}>Disparos</Text>
         </View>
       </View>
 
@@ -157,31 +158,28 @@ export function AutomationScreen(): React.ReactElement {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: spacing.screenPadding,
-    paddingVertical: spacing.md,
+    paddingHorizontal: 16,
+    paddingVertical: 16,
   },
   headerTitle: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: colors.text,
   },
   addButton: {
-    padding: spacing.xs,
+    padding: 4,
   },
   stats: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    paddingVertical: spacing.md,
-    marginHorizontal: spacing.screenPadding,
-    backgroundColor: colors.surface,
+    paddingVertical: 16,
+    marginHorizontal: 16,
     borderRadius: 12,
-    marginBottom: spacing.md,
+    marginBottom: 16,
   },
   statItem: {
     alignItems: 'center',
@@ -189,21 +187,18 @@ const styles = StyleSheet.create({
   statValue: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: colors.secondary,
   },
   statLabel: {
     fontSize: 12,
-    color: colors.textMuted,
     marginTop: 4,
   },
   list: {
-    padding: spacing.screenPadding,
+    padding: 16,
   },
   automationCard: {
-    backgroundColor: colors.surface,
     borderRadius: 12,
-    padding: spacing.md,
-    marginBottom: spacing.md,
+    padding: 16,
+    marginBottom: 16,
   },
   automationHeader: {
     flexDirection: 'row',
@@ -213,10 +208,9 @@ const styles = StyleSheet.create({
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: colors.backgroundLight,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: spacing.sm,
+    marginRight: 8,
   },
   automationInfo: {
     flex: 1,
@@ -224,27 +218,23 @@ const styles = StyleSheet.create({
   automationName: {
     fontSize: 16,
     fontWeight: '600',
-    color: colors.text,
     marginBottom: 2,
   },
   automationDescription: {
     fontSize: 12,
-    color: colors.textMuted,
   },
   automationFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: spacing.sm,
-    paddingTop: spacing.sm,
+    marginTop: 8,
+    paddingTop: 8,
     borderTopWidth: 1,
-    borderTopColor: colors.border,
   },
   triggerCount: {
     fontSize: 12,
-    color: colors.textMuted,
   },
   editButton: {
-    padding: spacing.xs,
+    padding: 4,
   },
 });

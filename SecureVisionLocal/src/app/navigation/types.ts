@@ -5,12 +5,16 @@ import type { CompositeScreenProps } from '@react-navigation/native';
 export type RootStackParamList = {
   Main: undefined;
   CameraView: { cameraId: string };
+  CameraDetail: { cameraId: string };
+  CameraSettings: { cameraId: string };
+  PTZControl: { cameraId: string };
+  AddCamera: undefined;
 };
 
 export type MainTabParamList = {
-  Home: undefined;
-  Cameras: undefined;
+  Live: undefined;
   Recordings: undefined;
+  Automation: undefined;
   Settings: undefined;
 };
 

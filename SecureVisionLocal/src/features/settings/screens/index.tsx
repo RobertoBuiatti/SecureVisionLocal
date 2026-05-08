@@ -9,9 +9,9 @@ import {
   useColorScheme,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors, spacing, borderRadius, fontSize, fontWeight } from '../../app/theme';
-import { useSettingsStore } from '../../stores/settingsStore';
-import type { MainTabScreenProps } from '../../app/navigation/types';
+import { colors, spacing, borderRadius, fontSize, fontWeight } from '../../../app/theme';
+import { useSettingsStore } from '../../../stores/settingsStore';
+import type { MainTabScreenProps } from '../../../app/navigation/types';
 
 type Props = MainTabScreenProps<'Settings'>;
 

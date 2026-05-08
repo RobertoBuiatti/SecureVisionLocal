@@ -4,12 +4,14 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { MainTabs } from './MainTabs';
 import { PTZControlScreen } from '@features/ptz/screens/PTZControlScreen';
 import { CameraDetailScreen } from '@features/cameras/screens/CameraDetailScreen';
-import { colors } from '../theme';
+import { useColors } from '../theme';
 import type { RootStackParamList } from './types';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export function AppNavigator(): React.ReactElement {
+  const colors = useColors();
+
   return (
     <NavigationContainer>
       <Stack.Navigator

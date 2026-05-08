@@ -8,15 +8,16 @@ import {
   Dimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors, spacing, borderRadius, fontSize, fontWeight } from '../../app/theme';
-import { useCameraStore } from '../../stores/cameraStore';
-import type { RootStackScreenProps } from '../../app/navigation/types';
+import { colors, spacing, borderRadius, fontSize, fontWeight, getStatusColor, useTheme } from '../../../app/theme';
+import { useCameraStore } from '../../../stores/cameraStore';
+import type { RootStackScreenProps } from '../../../app/navigation/types';
 
 type Props = RootStackScreenProps<'CameraView'>;
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 export function CameraViewScreen({ route, navigation }: Props) {
+  const { isDark } = useTheme();
   const { cameraId } = route.params;
   const insets = useSafeAreaInsets();
   const isDarkMode = useColorScheme() === 'dark';
@@ -58,7 +59,7 @@ export function CameraViewScreen({ route, navigation }: Props) {
             </Text>
             <View style={styles.statusInfo}>
               <View
-                style={[styles.statusDot, { backgroundColor: colors[camera.status] }]}
+                style={[styles.statusDot, { backgroundColor: getStatusColor(camera.status, isDark) }]}
               />
               <Text style={[styles.statusText, isDarkMode && styles.statusTextDark]}>
                 {camera.status.toUpperCase()}

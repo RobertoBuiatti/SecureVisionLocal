@@ -1,6 +1,7 @@
 export * from './camera';
 export * from './recording';
 export * from './automation';
+export * from './settings';
 
 export interface User {
   id: string;
