@@ -1,0 +1,130 @@
+# =============================================
+# SecureVisionLocal - Gitignore
+# =============================================
+
+# -------------
+# Dependencies - CRITICAL
+# -------------
+node_modules/
+*/node_modules/
+**/node_modules/
+.npm
+.yarn
+
+# -------------
+# React Native / Expo
+# -------------
+build/
+*.expo
+dist/
+web-build/
+
+# iOS
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+**/.xcode.env.local
+**/.xcode.cache/
+**/xcuserdata
+*.xccheckout
+DerivedData/
+*.hmap
+*.ipa
+*.xcuserstate
+ios/Pods/
+ios/build/
+ios/*.xcworkspace
+ios/*.xcodeproj
+
+# Android
+android/build/
+android/.gradle/
+android/app/build/
+android/app/release/
+local.properties
+*.iml
+.cxx/
+*.keystore
+!debug.keystore
+.kotlin/
+
+# -------------
+# Metro
+# -------------
+.metro-health-check*
+.metro/
+.hbc?
+
+# Bundle
+*.jsbundle
+*.hbc
+.bundle/
+
+# -------------
+# Testing
+# -------------
+coverage/
+jest-coverage/
+__tests__/
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+
+# -------------
+# IDE
+# -------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# -------------
+# Environment
+# -------------
+.env
+.env.local
+.env.*.local
+.env.production
+*.env
+
+# -------------
+# Logs
+# -------------
+logs/
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# -------------
+# Agent / Tooling (local config)
+# -------------
+.agent/
+.claude/
+.code-review-graph/
+.opencode.json
+
+# -------------
+# Cache
+# -------------
+.cache/
+tmp/
+temp/
+*.tmp
+
+# -------------
+# Documentation (local docs, not source)
+# -------------
+documentação/
+docs/
+
+# -------------
+# Build artifacts
+# -------------
+*.apk
+*.aab
+*.app
