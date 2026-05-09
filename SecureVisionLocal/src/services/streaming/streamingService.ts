@@ -1,4 +1,6 @@
-import type { Camera, CameraStream, StreamQuality } from '@shared/types';
+import type { Camera, CameraStream } from '@shared/types';
+
+export type StreamQuality = 'low' | 'medium' | 'high';
 
 export type StreamEventCallback = (event: StreamEvent) => void;
 
@@ -79,6 +81,7 @@ class StreamingService {
       this.streams.set(camera.id, {
         cameraId: camera.id,
         isPlaying: true,
+        isRecording: false,
         quality: this.getConfig(camera.id).quality,
         currentFps: 30,
         bitrate: this.getBitrate(camera.protocol, this.getConfig(camera.id).quality),
@@ -118,6 +121,7 @@ class StreamingService {
     this.streams.set(cameraId, {
       cameraId,
       isPlaying: false,
+      isRecording: false,
       quality: 'medium',
       currentFps: 0,
       bitrate: 0,

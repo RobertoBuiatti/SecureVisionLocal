@@ -68,7 +68,7 @@ export function LiveScreen(): React.ReactElement {
             ]}
           />
           <Text style={[styles.statusText, { color: colors.textMuted }]}>
-            {item.status === 'online' ? 'Online' : 'Offline'}
+            {item.status === 'online' ? 'Online' : item.status === 'connecting' ? 'Conectando' : item.status === 'error' ? 'Erro' : 'Offline'}
           </Text>
           {item.hasPTZ && (
             <Icon name="video" size={12} color={colors.textMuted} />

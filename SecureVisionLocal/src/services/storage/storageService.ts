@@ -1,86 +1,149 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import type { Camera } from '@shared/types';
 
-const STORAGE_KEYS = {
+export const STORAGE_KEYS = {
   CAMERAS: '@securevision/cameras',
   SETTINGS: '@securevision/settings',
-  USER: '@securevision/user',
-  AUTH_TOKEN: '@securevision/auth_token',
-  RECORDING_SETTINGS: '@securevision/recording_settings',
-  AUTOMATIONS: '@securevision/automations',
+  RECORDINGS: '@securevision/recordings',
   PTZ_PRESETS: '@securevision/ptz_presets',
   PTZ_TOURS: '@securevision/ptz_tours',
-  ALERTS: '@securevision/alerts',
-  LAST_SYNC: '@securevision/last_sync',
-  RECORDINGS: '@securevision/recordings',
-} as const;
+  AUTOMATIONS: '@securevision/automations',
+};
 
-class StorageService {
-  private static instance: StorageService;
-
-  private constructor() {}
-
-  public static getInstance(): StorageService {
-    if (!StorageService.instance) {
-      StorageService.instance = new StorageService();
-    }
-    return StorageService.instance;
-  }
-
-  public async getItem<T>(key: string): Promise<T | null> {
-    try {
-      const value = await AsyncStorage.getItem(key);
-      return value ? JSON.parse(value) : null;
-    } catch (error) {
-      console.error(`Error getting item ${key}:`, error);
-      return null;
-    }
-  }
-
-  public async setItem<T>(key: string, value: T): Promise<boolean> {
-    try {
-      await AsyncStorage.setItem(key, JSON.stringify(value));
-      return true;
-    } catch (error) {
-      console.error(`Error setting item ${key}:`, error);
-      return false;
-    }
-  }
-
-  public async removeItem(key: string): Promise<boolean> {
-    try {
-      await AsyncStorage.removeItem(key);
-      return true;
-    } catch (error) {
-      console.error(`Error removing item ${key}:`, error);
-      return false;
-    }
-  }
-
-  public async clear(): Promise<boolean> {
-    try {
-      await AsyncStorage.clear();
-      return true;
-    } catch (error) {
-      console.error('Error clearing storage:', error);
-      return false;
-    }
-  }
-
-  public async getAllKeys(): Promise<string[]> {
-    try {
-      return await AsyncStorage.getAllKeys();
-    } catch (error) {
-      console.error('Error getting all keys:', error);
-      return [];
-    }
-  }
-
-  public getKey<K extends keyof typeof STORAGE_KEYS>(
-    key: K
-  ): (typeof STORAGE_KEYS)[K] {
-    return STORAGE_KEYS[key];
-  }
+export interface StorageInfo {
+  used: number;
+  total: number;
+  recordings: number;
 }
 
-export const storage = StorageService.getInstance();
-export { STORAGE_KEYS };
+export const storageService = {
+  async saveCameras(cameras: Camera[]): Promise<void> {
+    try {
+      await AsyncStorage.setItem(STORAGE_KEYS.CAMERAS, JSON.stringify(cameras));
+    } catch (error) {
+      console.error('[Storage] Error saving cameras:', error);
+      throw error;
+    }
+  },
+
+  async getCameras(): Promise<Camera[]> {
+    try {
+      const data = await AsyncStorage.getItem(STORAGE_KEYS.CAMERAS);
+      return data ? JSON.parse(data) : [];
+    } catch (error) {
+      console.error('[Storage] Error getting cameras:', error);
+      return [];
+    }
+  },
+
+  async saveSettings(settings: Record<string, unknown>): Promise<void> {
+    try {
+      await AsyncStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+    } catch (error) {
+      console.error('[Storage] Error saving settings:', error);
+      throw error;
+    }
+  },
+
+  async getSettings(): Promise<Record<string, unknown>> {
+    try {
+      const data = await AsyncStorage.getItem(STORAGE_KEYS.SETTINGS);
+      return data ? JSON.parse(data) : {};
+    } catch (error) {
+      console.error('[Storage] Error getting settings:', error);
+      return {};
+    }
+  },
+
+  async savePTZPresets(cameraId: string, presets: unknown[]): Promise<void> {
+    try {
+      const allPresets = await this.getAllPTZPresets();
+      allPresets[cameraId] = presets;
+      await AsyncStorage.setItem(STORAGE_KEYS.PTZ_PRESETS, JSON.stringify(allPresets));
+    } catch (error) {
+      console.error('[Storage] Error saving PTZ presets:', error);
+      throw error;
+    }
+  },
+
+  async getAllPTZPresets(): Promise<Record<string, unknown[]>> {
+    try {
+      const data = await AsyncStorage.getItem(STORAGE_KEYS.PTZ_PRESETS);
+      return data ? JSON.parse(data) : {};
+    } catch (error) {
+      console.error('[Storage] Error getting PTZ presets:', error);
+      return {};
+    }
+  },
+
+  async savePTZTours(cameraId: string, tours: unknown[]): Promise<void> {
+    try {
+      const allTours = await this.getAllPTZTours();
+      allTours[cameraId] = tours;
+      await AsyncStorage.setItem(STORAGE_KEYS.PTZ_TOURS, JSON.stringify(allTours));
+    } catch (error) {
+      console.error('[Storage] Error saving PTZ tours:', error);
+      throw error;
+    }
+  },
+
+  async getAllPTZTours(): Promise<Record<string, unknown[]>> {
+    try {
+      const data = await AsyncStorage.getItem(STORAGE_KEYS.PTZ_TOURS);
+      return data ? JSON.parse(data) : {};
+    } catch (error) {
+      console.error('[Storage] Error getting PTZ tours:', error);
+      return {};
+    }
+  },
+
+  async saveAutomations(automations: unknown[]): Promise<void> {
+    try {
+      await AsyncStorage.setItem(STORAGE_KEYS.AUTOMATIONS, JSON.stringify(automations));
+    } catch (error) {
+      console.error('[Storage] Error saving automations:', error);
+      throw error;
+    }
+  },
+
+  async getAutomations(): Promise<unknown[]> {
+    try {
+      const data = await AsyncStorage.getItem(STORAGE_KEYS.AUTOMATIONS);
+      return data ? JSON.parse(data) : [];
+    } catch (error) {
+      console.error('[Storage] Error getting automations:', error);
+      return [];
+    }
+  },
+
+  async clearAll(): Promise<void> {
+    try {
+      await AsyncStorage.multiRemove(Object.values(STORAGE_KEYS));
+    } catch (error) {
+      console.error('[Storage] Error clearing all:', error);
+      throw error;
+    }
+  },
+
+  async getStorageInfo(): Promise<StorageInfo> {
+    const cameras = await this.getCameras();
+    const settings = await this.getSettings();
+    const recordings: unknown[] = [];
+    
+    let usedBytes = 0;
+    cameras.forEach(() => {
+      usedBytes += 1024 * 1024 * 10; 
+    });
+    recordings.forEach(() => {
+      usedBytes += 1024 * 1024 * 50;
+    });
+
+    const totalBytes = 1024 * 1024 * 1024 * 64;
+
+    return {
+      used: usedBytes,
+      total: totalBytes,
+      recordings: recordings.length,
+    };
+  },
+};

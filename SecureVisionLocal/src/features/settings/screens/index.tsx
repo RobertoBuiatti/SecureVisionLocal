@@ -108,7 +108,11 @@ export function SettingsScreen({ }: Props) {
                 {item.type === 'toggle' && (
                   <Switch
                     value={item.value === 'theme' ? isDark : false}
-                    onValueChange={() => item.value && handleToggle(item.value)}
+                    onValueChange={(value) => {
+                      if (item.value) {
+                        handleToggle(item.value);
+                      }
+                    }}
                     trackColor={{ false: colors.border, true: colors.primary }}
                     thumbColor="#fff"
                   />

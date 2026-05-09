@@ -1,6 +1,34 @@
 import RNFS from 'react-native-fs';
-import type { Recording, RecordingMetadata } from '@shared/types';
-import { streamingService } from './streamingService';
+import { streamingService } from '../streaming/streamingService';
+
+interface Recording {
+  id: string;
+  cameraId: string;
+  cameraName?: string;
+  startTime: number;
+  endTime?: number | null;
+  duration: number | string;
+  durationSeconds?: number;
+  fileSize?: number;
+  sizeBytes?: number;
+  size?: string | number;
+  filePath?: string;
+  filepath?: string;
+  thumbnail?: string;
+  recordingIndex?: number;
+  hasMotion: boolean;
+  hasPerson?: boolean;
+  hasVehicle?: boolean;
+  status?: 'recording' | 'completed' | 'corrupted';
+  type?: 'continuous' | 'motion' | 'manual';
+  quality?: string;
+  mode?: string;
+  filename?: string;
+  date?: string;
+  motionClips?: unknown[];
+}
+
+export type { Recording as RecordingMetadata };
 
 export type RecordingMode = 'continuous' | 'motion' | 'scheduled' | 'manual';
 
@@ -105,7 +133,7 @@ class RecordingService {
       const filename = `${recordingId}.mp4`;
       const filepath = `${this.storagePath}/${filename}`;
 
-      const metadata: RecordingMetadata = {
+      const metadata = {
         id: recordingId,
         cameraId,
         filepath,
@@ -224,7 +252,7 @@ class RecordingService {
       if (!recordings) return false;
 
       const recording = recordings.find(r => r.id === recordingId);
-      if (recording) {
+      if (recording && recording.filepath) {
         const exists = await RNFS.exists(recording.filepath);
         if (exists) {
           await RNFS.unlink(recording.filepath);

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import NetInfo, { NetInfoState } from '@react-native-community/netinfo';
+import NetInfo, { NetInfoState, NetInfoStateType } from '@react-native-community/netinfo';
 
 interface UseNetworkResult {
   isConnected: boolean | null;
@@ -9,13 +9,7 @@ interface UseNetworkResult {
 }
 
 export function useNetwork(): UseNetworkResult {
-  const [state, setState] = useState<NetInfoState>({
-    isConnected: null,
-    isInternetReachable: null,
-    type: 'unknown',
-    isConnectionExpensive: false,
-    details: null,
-  });
+  const [state, setState] = useState<NetInfoState | null>(null);
 
   useEffect(() => {
     const unsubscribe = NetInfo.addEventListener(setState);
@@ -33,9 +27,9 @@ export function useNetwork(): UseNetworkResult {
   }, []);
 
   return {
-    isConnected: state.isConnected,
-    isInternetReachable: state.isInternetReachable,
-    type: state.type,
+    isConnected: state?.isConnected ?? null,
+    isInternetReachable: state?.isInternetReachable ?? null,
+    type: state?.type ?? null,
     refresh,
   };
 }

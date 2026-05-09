@@ -40,7 +40,7 @@ const DEFAULT_MOTION_CONFIG: MotionConfig = {
 class MotionDetectionService {
   private static instance: MotionDetectionService;
   private configs: Map<string, MotionConfig> = new Map();
-  private listeners: Set<(event: MotionEvent) => void> = new Map();
+  private listeners: Map<string, (event: MotionEvent) => void> = new Map();
   private lastMotionTime: Map<string, number> = new Map();
   private frameCounts: Map<string, number> = new Map();
   private isEnabled: Map<string, boolean> = new Map();

@@ -110,6 +110,16 @@ Consulte [ARCHITECTURE.md](ARCHITECTURE.md) para detalhes da arquitetura.
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Arquitetura técnica |
 | [API.md](API.md) | Referência da API |
 | [CHANGELOG.md](CHANGELOG.md) | Histórico de mudanças |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Guia de contribuição |
+| [docs/COMPONENTS.md](docs/COMPONENTS.md) | Componentes UI |
+| [docs/HOOKS.md](docs/HOOKS.md) | Hooks personalizados |
+| [docs/SERVICES.md](docs/SERVICES.md) | Serviços de infraestrutura |
+| [docs/STORES.md](docs/STORES.md) | Gerenciamento de estado |
+| [docs/NAVIGATION.md](docs/NAVIGATION.md) | Navegação e rotas |
+| [docs/THEME.md](docs/THEME.md) | Sistema de temas |
+| [docs/FEATURES.md](docs/FEATURES.md) | Visão geral das features |
+| [docs/SECURITY.md](docs/SECURITY.md) | Configurações de segurança |
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Solução de problemas |
 
 ## 🤝 Contribuição
 
