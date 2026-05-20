@@ -1,10 +1,13 @@
-import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse } from 'axios';
+import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, InternalAxiosRequestConfig } from 'axios';
 
 const BASE_URL = 'http://localhost:8080/api';
+
+export type AuthCallback = (() => void) | null;
 
 class ApiClient {
   private client: AxiosInstance;
   private static instance: ApiClient;
+  private authCallback: AuthCallback = null;
 
   private constructor() {
     this.client = axios.create({
@@ -16,7 +19,7 @@ class ApiClient {
     });
 
     this.client.interceptors.request.use(
-      config => {
+      (config: InternalAxiosRequestConfig) => {
         return config;
       },
       error => {
@@ -28,10 +31,22 @@ class ApiClient {
       response => response,
       error => {
         if (error.response?.status === 401) {
+          this.handleUnauthorized();
         }
         return Promise.reject(error);
       }
     );
+  }
+
+  private handleUnauthorized(): void {
+    this.clearAuthToken();
+    if (this.authCallback) {
+      this.authCallback();
+    }
+  }
+
+  public setAuthCallback(callback: AuthCallback): void {
+    this.authCallback = callback;
   }
 
   public static getInstance(): ApiClient {

@@ -3,7 +3,7 @@ import { PTZPreset, PTZTour, PTZControlState, PTZSpeed, PTZTourRun, PTZCommand, 
 export type PTZEventCallback = (event: PTZEvent) => void;
 
 export interface PTZEvent {
-  type: 'COMMAND' | 'PRESET_REACHED' | 'TOUR_START' | 'TOUR_STOP' | 'TOUR_COMPLETE' | 'TOUR_PAUSE' | 'TOUR_RESUME' | 'ERROR';
+  type: 'COMMAND' | 'PRESET_ADDED' | 'PRESET_REACHED' | 'TOUR_START' | 'TOUR_STOP' | 'TOUR_COMPLETE' | 'TOUR_PAUSE' | 'TOUR_RESUME' | 'ERROR';
   cameraId: string;
   data?: Record<string, unknown>;
   timestamp: number;
@@ -51,7 +51,7 @@ class PTZService {
     presets.push(preset);
     this.presets.set(cameraId, presets);
     this.emitEvent({
-      type: 'PRESET_REACHED',
+      type: 'PRESET_ADDED',
       cameraId,
       data: { preset },
       timestamp: Date.now(),

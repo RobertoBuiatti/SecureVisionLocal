@@ -14,10 +14,25 @@ import { Icon } from '@shared/components/Icon';
 import { PTZJoystick } from '@features/ptz/components/PTZJoystick';
 import { PTZControls } from '@features/ptz/components/PTZControls';
 import { ptzService } from '@features/ptz/services/ptzService';
-import { PTZPreset, PTZTour, PTZSpeed } from '@features/ptz/types';
+import { PTZPreset, PTZTour, PTZSpeed, PTZCommand } from '@features/ptz/types';
 import type { RootStackScreenProps } from '@app/navigation/types';
 
 type Props = RootStackScreenProps<'PTZControl'>;
+
+const JOYSTICK_DIRECTION_MAP: Record<string, PTZCommand> = {
+  UP: 'UP',
+  DOWN: 'DOWN',
+  LEFT: 'LEFT',
+  RIGHT: 'RIGHT',
+  UP_LEFT: 'UP_LEFT',
+  UP_RIGHT: 'UP_RIGHT',
+  DOWN_LEFT: 'DOWN_LEFT',
+  DOWN_RIGHT: 'DOWN_RIGHT',
+};
+
+function mapJoystickToPTZCommand(direction: string): PTZCommand | null {
+  return JOYSTICK_DIRECTION_MAP[direction] || null;
+}
 
 export function PTZControlScreen({ route, navigation }: Props): React.ReactElement {
   const { cameraId } = route.params;
@@ -116,7 +131,10 @@ export function PTZControlScreen({ route, navigation }: Props): React.ReactEleme
   }, [cameraId]);
 
   const handleJoystickMove = useCallback(async (direction: string, speed: PTZSpeed) => {
-    await ptzService.sendCommand(cameraId, direction as any, speed);
+    const command = mapJoystickToPTZCommand(direction);
+    if (command) {
+      await ptzService.sendCommand(cameraId, command, speed);
+    }
   }, [cameraId]);
 
   const handleJoystickRelease = useCallback(async () => {

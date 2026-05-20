@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,10 +6,13 @@ import {
   TouchableOpacity,
   useColorScheme,
   Dimensions,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, spacing, borderRadius, fontSize, fontWeight, getStatusColor, useTheme } from '../../../app/theme';
 import { useCameraStore } from '../../../stores/cameraStore';
+import { useRecordingStore } from '../../../stores/recordingStore';
+import { streamingService } from '../../../services/streaming/streamingService';
 import type { RootStackScreenProps } from '../../../app/navigation/types';
 
 type Props = RootStackScreenProps<'CameraView'>;
@@ -22,8 +25,56 @@ export function CameraViewScreen({ route, navigation }: Props) {
   const insets = useSafeAreaInsets();
   const isDarkMode = useColorScheme() === 'dark';
   
+  const [isPaused, setIsPaused] = useState(false);
+  const [currentRecordingId, setCurrentRecordingId] = useState<string | null>(null);
+  
   const cameras = useCameraStore((state) => state.cameras);
+  const updateCamera = useCameraStore((state) => state.updateCamera);
   const camera = cameras.find((c) => c.id === cameraId);
+  
+  const { startRecording, stopRecording, isRecording, activeRecordingId } = useRecordingStore();
+
+  const handlePlayPause = useCallback(async () => {
+    if (!camera) return;
+    
+    if (isPaused) {
+      await streamingService.connect(camera);
+      console.log('[CameraView] Streaming resumed');
+    } else {
+      await streamingService.disconnect(cameraId);
+      console.log('[CameraView] Streaming paused');
+    }
+    setIsPaused(!isPaused);
+  }, [camera, cameraId, isPaused]);
+
+  const handleRecord = useCallback(() => {
+    if (!camera) return;
+    
+    if (activeRecordingId) {
+      stopRecording(activeRecordingId);
+      updateCamera(cameraId, { isRecording: false });
+      setCurrentRecordingId(null);
+      console.log('[CameraView] Recording stopped');
+    } else {
+      startRecording(cameraId, camera.name, 'manual');
+      updateCamera(cameraId, { isRecording: true });
+      setCurrentRecordingId(`rec_${Date.now()}`);
+      console.log('[CameraView] Recording started');
+    }
+  }, [camera, cameraId, activeRecordingId, startRecording, stopRecording, updateCamera]);
+
+  const handleSettings = useCallback(() => {
+    Alert.alert(
+      'Configurações da Câmera',
+      'Selecione uma opção:',
+      [
+        { text: 'Qualidade do Stream', onPress: () => console.log('[CameraView] Quality settings') },
+        { text: 'Detecção de Movimento', onPress: () => console.log('[CameraView] Motion settings') },
+        { text: 'Configurações PTZ', onPress: () => navigation.navigate('PTZControl', { cameraId }) },
+        { text: 'Cancelar', style: 'cancel' },
+      ]
+    );
+  }, [cameraId, navigation]);
 
   if (!camera) {
     return (
@@ -35,6 +86,8 @@ export function CameraViewScreen({ route, navigation }: Props) {
     );
   }
 
+  const isCurrentlyRecording = activeRecordingId !== null;
+
   return (
     <View style={[styles.container, isDarkMode && styles.containerDark]}>
       <View
@@ -43,13 +96,24 @@ export function CameraViewScreen({ route, navigation }: Props) {
           { paddingTop: insets.top },
         ]}>
         <View style={styles.videoPlaceholder}>
-          <Text style={styles.placeholderIcon}>📹</Text>
-          <Text style={[styles.placeholderText, isDarkMode && styles.placeholderTextDark]}>
-            Stream: {camera.streamUrl}
-          </Text>
-          <Text style={[styles.placeholderSubtext, isDarkMode && styles.placeholderSubtextDark]}>
-            Conectando a {camera.ip}:{camera.port}...
-          </Text>
+          {isPaused ? (
+            <>
+              <Text style={styles.placeholderIcon}>⏸️</Text>
+              <Text style={[styles.placeholderText, isDarkMode && styles.placeholderTextDark]}>
+                Stream pausado
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text style={styles.placeholderIcon}>📹</Text>
+              <Text style={[styles.placeholderText, isDarkMode && styles.placeholderTextDark]}>
+                Stream: {camera.streamUrl}
+              </Text>
+              <Text style={[styles.placeholderSubtext, isDarkMode && styles.placeholderSubtextDark]}>
+                Conectando a {camera.ip}:{camera.port}...
+              </Text>
+            </>
+          )}
         </View>
 
         <View style={styles.overlay}>
@@ -64,7 +128,7 @@ export function CameraViewScreen({ route, navigation }: Props) {
               <Text style={[styles.statusText, isDarkMode && styles.statusTextDark]}>
                 {camera.status.toUpperCase()}
               </Text>
-              {camera.isRecording && (
+              {isCurrentlyRecording && (
                 <View style={styles.recordingIndicator}>
                   <View style={styles.recordingDot} />
                   <Text style={styles.recordingText}>REC</Text>
@@ -82,15 +146,29 @@ export function CameraViewScreen({ route, navigation }: Props) {
       </View>
 
       <View style={[styles.controls, { paddingBottom: insets.bottom + spacing.md }]}>
-        <TouchableOpacity style={[styles.controlButton, isDarkMode && styles.controlButtonDark]}>
-          <Text style={styles.controlIcon}>⏸</Text>
+        <TouchableOpacity 
+          style={[styles.controlButton, isDarkMode && styles.controlButtonDark]}
+          onPress={handlePlayPause}
+        >
+          <Text style={styles.controlIcon}>{isPaused ? '▶️' : '⏸'}</Text>
         </TouchableOpacity>
         
-        <TouchableOpacity style={[styles.controlButton, styles.recordButton, isDarkMode && styles.recordButtonDark]}>
-          <Text style={styles.controlIcon}>⏺</Text>
+        <TouchableOpacity 
+          style={[
+            styles.controlButton, 
+            styles.recordButton, 
+            isCurrentlyRecording && styles.recordButtonActive,
+            isDarkMode && styles.recordButtonDark
+          ]}
+          onPress={handleRecord}
+        >
+          <Text style={styles.controlIcon}>{isCurrentlyRecording ? '⏹' : '⏺'}</Text>
         </TouchableOpacity>
         
-        <TouchableOpacity style={[styles.controlButton, isDarkMode && styles.controlButtonDark]}>
+        <TouchableOpacity 
+          style={[styles.controlButton, isDarkMode && styles.controlButtonDark]}
+          onPress={handleSettings}
+        >
           <Text style={styles.controlIcon}>⚙️</Text>
         </TouchableOpacity>
       </View>

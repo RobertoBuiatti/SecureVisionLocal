@@ -58,10 +58,14 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
     })),
 
   deleteRecording: (id) =>
-    set((state) => ({
-      recordings: state.recordings.filter((rec) => rec.id !== id),
-      totalSize: state.totalSize - (state.recordings.find(r => r.id === id)?.fileSize || 0),
-    })),
+    set((state) => {
+      const recordingToDelete = state.recordings.find(r => r.id === id);
+      const deletedSize = recordingToDelete?.fileSize || 0;
+      return {
+        recordings: state.recordings.filter((rec) => rec.id !== id),
+        totalSize: state.totalSize - deletedSize,
+      };
+    }),
 
   startRecording: (cameraId, cameraName, type = 'manual') => {
     const newRecording: Recording = {
@@ -93,23 +97,30 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
     if (!recording) return;
 
     const duration = Math.floor((now - recording.startTime) / 1000);
+    const fileSize = duration * 1024 * 100;
     
-    set((state) => ({
-      isRecording: false,
-      activeRecordingId: null,
-      recordings: state.recordings.map((rec) =>
+    set((state) => {
+      const updatedRecordings = state.recordings.map((rec) =>
         rec.id === id
           ? {
               ...rec,
               endTime: now,
               duration,
               status: 'completed' as const,
-              fileSize: duration * 1024 * 100,
+              fileSize,
             }
           : rec
-      ),
-      totalSize: get().calculateTotalSize(),
-    }));
+      );
+      
+      const newTotalSize = updatedRecordings.reduce((sum, rec) => sum + rec.fileSize, 0);
+      
+      return {
+        isRecording: false,
+        activeRecordingId: null,
+        recordings: updatedRecordings,
+        totalSize: newTotalSize,
+      };
+    });
   },
 
   setTotalSize: (size) => set({ totalSize: size }),

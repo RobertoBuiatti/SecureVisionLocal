@@ -192,6 +192,12 @@ class StreamingService {
 
   public async reconnect(cameraId: string, cameras: Camera[]): Promise<void> {
     const config = this.getConfig(cameraId);
+    
+    const existingTimer = this.reconnectTimers.get(cameraId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+
     let retries = 0;
 
     const attemptReconnect = async () => {
@@ -205,6 +211,8 @@ class StreamingService {
           const timer = setTimeout(attemptReconnect, config.reconnectInterval);
           this.reconnectTimers.set(cameraId, timer);
         }
+      } else {
+        this.reconnectTimers.delete(cameraId);
       }
     };
 

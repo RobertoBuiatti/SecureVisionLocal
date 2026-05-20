@@ -1,6 +1,7 @@
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import type { Camera } from '@shared/types';
-import { storageService } from '@services/storage/storageService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 interface CameraState {
   cameras: Camera[];
@@ -17,66 +18,69 @@ interface CameraState {
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   initialize: () => Promise<void>;
-  persistCameras: () => Promise<void>;
 }
 
-export const useCameraStore = create<CameraState>((set, get) => ({
-  cameras: [],
-  selectedCameraId: null,
-  isLoading: false,
-  error: null,
-  isInitialized: false,
+export const useCameraStore = create<CameraState>()(
+  persist(
+    (set, get) => ({
+      cameras: [],
+      selectedCameraId: null,
+      isLoading: false,
+      error: null,
+      isInitialized: false,
 
-  setCameras: (cameras) => set({ cameras }),
+      setCameras: (cameras) => set({ cameras }),
 
-  addCamera: (camera) =>
-    set((state) => ({ cameras: [...state.cameras, camera] })),
+      addCamera: (camera) =>
+        set((state) => ({ cameras: [...state.cameras, camera] })),
 
-  updateCamera: (id, updates) =>
-    set((state) => ({
-      cameras: state.cameras.map((cam) =>
-        cam.id === id ? { ...cam, ...updates, updatedAt: Date.now() } : cam
-      ),
-    })),
+      updateCamera: (id, updates) =>
+        set((state) => ({
+          cameras: state.cameras.map((cam) =>
+            cam.id === id ? { ...cam, ...updates, updatedAt: Date.now() } : cam
+          ),
+        })),
 
-  removeCamera: (id) =>
-    set((state) => ({
-      cameras: state.cameras.filter((cam) => cam.id !== id),
-      selectedCameraId: state.selectedCameraId === id ? null : state.selectedCameraId,
-    })),
+      removeCamera: (id) =>
+        set((state) => ({
+          cameras: state.cameras.filter((cam) => cam.id !== id),
+          selectedCameraId: state.selectedCameraId === id ? null : state.selectedCameraId,
+        })),
 
-  selectCamera: (id) => set({ selectedCameraId: id }),
+      selectCamera: (id) => set({ selectedCameraId: id }),
 
-  setLoading: (isLoading) => set({ isLoading }),
+      setLoading: (isLoading) => set({ isLoading }),
 
-  setError: (error) => set({ error }),
+      setError: (error) => set({ error }),
 
-  initialize: async () => {
-    if (get().isInitialized) return;
-    
-    set({ isLoading: true, error: null });
-    try {
-      const cameras = await storageService.getCameras();
-      if (cameras.length === 0) {
-        const defaultCameras = getDefaultCameras();
-        set({ cameras: defaultCameras, isLoading: false, isInitialized: true });
-        await storageService.saveCameras(defaultCameras);
-      } else {
-        set({ cameras, isLoading: false, isInitialized: true });
-      }
-    } catch (error) {
-      set({ error: 'Failed to load cameras', isLoading: false, isInitialized: true });
+      initialize: async () => {
+        const state = get();
+        if (state.isInitialized) return;
+        if (state.isLoading) return;
+
+        set({ isLoading: true, error: null });
+
+        const existingCameras = state.cameras;
+
+        if (existingCameras.length === 0) {
+          const defaultCameras = getDefaultCameras();
+          set({
+            cameras: defaultCameras,
+            isLoading: false,
+            isInitialized: true
+          });
+        } else {
+          set({ isLoading: false, isInitialized: true });
+        }
+      },
+    }),
+    {
+      name: 'securevision-cameras',
+      storage: createJSONStorage(() => AsyncStorage),
+      partialize: (state) => ({ cameras: state.cameras }),
     }
-  },
-
-  persistCameras: async () => {
-    try {
-      await storageService.saveCameras(get().cameras);
-    } catch (error) {
-      console.error('[CameraStore] Failed to persist cameras:', error);
-    }
-  },
-}));
+  )
+);
 
 function getDefaultCameras(): Camera[] {
   return [
