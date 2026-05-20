@@ -148,9 +148,12 @@ class StreamingService {
   public async changeQuality(cameraId: string, quality: StreamQuality): Promise<void> {
     const stream = this.streams.get(cameraId);
     if (stream) {
-      const config = this.getConfig(cameraId);
-      config.quality = quality;
-      this.streamConfigs.set(cameraId, config);
+      const currentConfig = this.getConfig(cameraId);
+      const newConfig: StreamConfig = {
+        ...currentConfig,
+        quality,
+      };
+      this.streamConfigs.set(cameraId, newConfig);
       
       stream.quality = quality;
       stream.bitrate = this.getBitrate('rtsp', quality);

@@ -10,12 +10,12 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, spacing } from '@app/theme';
 import { Icon } from '@shared/components/Icon';
-import { streamingService } from '@services/streaming/streamingService';
+import { streamingService, type StreamQuality } from '@services/streaming/streamingService';
 import type { Camera, CameraStream } from '@shared/types';
 
 interface VideoPlayerProps {
   camera: Camera;
-  quality?: 'low' | 'medium' | 'high';
+  quality?: StreamQuality;
   onError?: (error: string) => void;
   onReady?: () => void;
 }
@@ -44,7 +44,7 @@ export function VideoPlayer({
     setError(null);
 
     try {
-      streamingService.setConfig(camera.id, { quality: quality as any });
+      streamingService.setConfig(camera.id, { quality: quality || 'medium' });
       const success = await streamingService.connect(camera);
 
       if (success) {
@@ -61,9 +61,9 @@ export function VideoPlayer({
     } finally {
       setIsLoading(false);
     }
-  }, [camera.id, camera.streamUrl, quality]);
+  }, [camera.id, camera.streamUrl, quality, onReady, onError]);
 
-  const handleQualityChange = useCallback(async (newQuality: 'low' | 'medium' | 'high') => {
+  const handleQualityChange = useCallback(async (newQuality: StreamQuality) => {
     await streamingService.changeQuality(camera.id, newQuality);
     const updatedStream = streamingService.getStream(camera.id);
     setStream(updatedStream || null);
@@ -102,36 +102,17 @@ export function VideoPlayer({
     return colors.warning;
   };
 
-  const playerStyle = isFullscreen
-    ? StyleSheet.create({
-        container: {
-          flex: 1,
-          backgroundColor: colors.background,
-        },
-        videoWrapper: {
-          flex: 1,
-        },
-      })
-    : StyleSheet.create({
-        container: {
-          width: '100%',
-          aspectRatio: 16 / 9,
-          borderRadius: 12,
-          overflow: 'hidden',
-          backgroundColor: colors.surface,
-        },
-        videoWrapper: {
-          flex: 1,
-        },
-      });
+  const containerStyle = isFullscreen 
+    ? [styles.fullscreenContainer, { backgroundColor: colors.background }] 
+    : [styles.container, { backgroundColor: colors.surface }];
 
   return (
     <TouchableOpacity
       activeOpacity={0.9}
       onPress={handleToggleControls}
-      style={playerStyle.container}
+      style={containerStyle}
     >
-      <View style={playerStyle.videoWrapper}>
+      <View style={styles.videoWrapper}>
         {isLoading && (
           <View style={styles.loadingOverlay}>
             <ActivityIndicator size="large" color={colors.secondary} />
@@ -232,6 +213,10 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     overflow: 'hidden',
     backgroundColor: colors.surface,
+  },
+  fullscreenContainer: {
+    flex: 1,
+    backgroundColor: colors.background,
   },
   videoWrapper: {
     flex: 1,

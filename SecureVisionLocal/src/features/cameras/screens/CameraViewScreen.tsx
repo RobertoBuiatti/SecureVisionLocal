@@ -314,6 +314,9 @@ const styles = StyleSheet.create({
     borderRadius: 32,
     backgroundColor: colors.recording,
   },
+  recordButtonActive: {
+    backgroundColor: colors.error,
+  },
   recordButtonDark: {
     backgroundColor: colors.recording,
   },

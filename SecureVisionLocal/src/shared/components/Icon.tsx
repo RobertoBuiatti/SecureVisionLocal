@@ -67,6 +67,8 @@ const iconMap: Record<string, string> = {
   'battery-low': '\u{1FAAB}',
   signal: '\u{1F4F6}',
   'signal-off': '\u{1F4F6}',
+  connection: '\u{1F310}',
+  network: '\u{1F310}',
 };
 
 export function Icon({

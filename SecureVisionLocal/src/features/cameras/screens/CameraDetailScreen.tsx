@@ -7,11 +7,13 @@ import {
   StatusBar,
   Dimensions,
   Image,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, spacing } from '@app/theme';
 import { Icon } from '@shared/components/Icon';
 import { useCameraStore } from '../../../stores';
+import { useCameraConnection } from '@shared/hooks/useCameraConnection';
 import type { RootStackScreenProps } from '../../../app/navigation/types';
 
 const { width: screenWidth } = Dimensions.get('window');
@@ -24,9 +26,44 @@ export function CameraDetailScreen({ route, navigation }: Props): React.ReactEle
   const camera = useCameraStore((state) =>
     state.cameras.find((c) => c.id === cameraId)
   );
+  const { connectionState, isTesting, isConnecting, isOffline, testConnection, latency, retryCount, maxRetries, canRetry, attemptReconnection, resetRetry } = useCameraConnection(cameraId);
 
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [showControls, setShowControls] = useState(true);
+
+  const handleTestConnection = async () => {
+    if (isOffline && canRetry) {
+      await attemptReconnection();
+    } else {
+      await testConnection();
+    }
+  };
+
+  const handleResetRetry = () => {
+    resetRetry();
+    testConnection();
+  };
+
+  const getConnectionStatusColor = () => {
+    if (isTesting || isConnecting) return colors.warning;
+    if (connectionState?.status === 'online') return colors.live;
+    return colors.offline;
+  };
+
+  const getConnectionStatusText = () => {
+    if (isTesting) return 'Testando...';
+    if (isConnecting) return 'Reconectando...';
+    if (connectionState?.status === 'online') {
+      return latency ? `Online (${latency}ms)` : 'Online';
+    }
+    if (isOffline && !canRetry) {
+      return `Offline (max retries: ${retryCount}/${maxRetries})`;
+    }
+    if (isOffline && canRetry) {
+      return connectionState?.error || `Offline (tentativa ${retryCount + 1}/${maxRetries})`;
+    }
+    return connectionState?.error || 'Offline';
+  };
 
   useEffect(() => {
     if (!camera) {
@@ -87,20 +124,33 @@ export function CameraDetailScreen({ route, navigation }: Props): React.ReactEle
               <View
                 style={[
                   styles.statusDot,
-                  { backgroundColor: getStatusColor() },
+                  { backgroundColor: getConnectionStatusColor() },
                 ]}
               />
               <Text style={styles.statusText}>
-                {camera.status === 'online' ? 'Online' : 'Offline'}
+                {getConnectionStatusText()}
               </Text>
             </View>
           </View>
-          <TouchableOpacity
-            onPress={() => navigation.navigate('CameraSettings', { cameraId })}
-            style={styles.settingsButton}
-          >
-            <Icon name="cog-outline" size={22} color={colors.text} />
-          </TouchableOpacity>
+          <View style={styles.headerRight}>
+            <TouchableOpacity
+              onPress={handleTestConnection}
+              style={styles.testButton}
+              disabled={isTesting}
+            >
+              {isTesting ? (
+                <ActivityIndicator size="small" color={colors.secondary} />
+              ) : (
+                <Icon name="connection" size={20} color={colors.secondary} />
+              )}
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => navigation.navigate('CameraSettings', { cameraId })}
+              style={styles.settingsButton}
+            >
+              <Icon name="cog-outline" size={22} color={colors.text} />
+            </TouchableOpacity>
+          </View>
         </View>
       )}
 
@@ -224,6 +274,14 @@ const styles = StyleSheet.create({
   },
   settingsButton: {
     padding: spacing.xs,
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  testButton: {
+    padding: spacing.xs,
+    marginRight: spacing.sm,
   },
   videoContainer: {
     flex: 1,

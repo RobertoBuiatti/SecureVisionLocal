@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   FlatList,
   StatusBar,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -13,45 +14,44 @@ import { useColors, spacing } from '@app/theme';
 import type { Camera } from '@shared/types';
 import { Icon } from '@shared/components/Icon';
 import { useCameraStore } from '../../../stores';
+import { useCameraConnection, useAllCamerasConnection } from '@shared/hooks/useCameraConnection';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../../../app/navigation/types';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
-export function LiveScreen(): React.ReactElement {
-  const insets = useSafeAreaInsets();
-  const navigation = useNavigation<NavigationProp>();
+function CameraCard({ camera, onPress }: { camera: Camera; onPress: () => void }) {
   const colors = useColors();
-  const cameras = useCameraStore((state) => state.cameras);
+  const { connectionState, isTesting, testConnection, latency } = useCameraConnection(camera.id);
 
-  const getStatusColor = (status: Camera['status']) => {
-    switch (status) {
-      case 'online':
-        return colors.live;
-      case 'offline':
-        return colors.offline;
-      case 'error':
-        return colors.error;
-      case 'connecting':
-        return colors.warning;
-      default:
-        return colors.offline;
+  const handleTestConnection = async (e: any) => {
+    e.stopPropagation();
+    await testConnection();
+  };
+
+  const getConnectionStatusColor = () => {
+    if (isTesting) return colors.warning;
+    if (connectionState?.status === 'online') return colors.live;
+    return colors.offline;
+  };
+
+  const getConnectionStatusText = () => {
+    if (isTesting) return 'Testando...';
+    if (connectionState?.status === 'online') {
+      return latency ? `${latency}ms` : 'Conectado';
     }
+    return connectionState?.error || 'Offline';
   };
 
-  const handleCameraPress = (cameraId: string) => {
-    navigation.navigate('CameraDetail', { cameraId });
-  };
-
-  const renderCameraCard = ({ item }: { item: Camera }) => (
+  return (
     <TouchableOpacity
       style={[styles.cameraCard, { backgroundColor: colors.surface }]}
       activeOpacity={0.8}
-      onPress={() => handleCameraPress(item.id)}
+      onPress={onPress}
     >
       <View style={[styles.cameraPreview, { backgroundColor: colors.backgroundLight }]}>
         <Text style={styles.previewPlaceholder}>📹</Text>
-        {item.isRecording && (
+        {camera.isRecording && (
           <View style={styles.recordingIndicator}>
             <Icon name="record-circle" size={12} color={colors.recording} />
             <Text style={[styles.recordingText, { color: colors.recording }]}>REC</Text>
@@ -59,23 +59,48 @@ export function LiveScreen(): React.ReactElement {
         )}
       </View>
       <View style={styles.cameraInfo}>
-        <Text style={[styles.cameraName, { color: colors.text }]}>{item.name}</Text>
+        <Text style={[styles.cameraName, { color: colors.text }]}>{camera.name}</Text>
         <View style={styles.cameraStatus}>
           <View
             style={[
               styles.statusDot,
-              { backgroundColor: getStatusColor(item.status) },
+              { backgroundColor: getConnectionStatusColor() },
             ]}
           />
           <Text style={[styles.statusText, { color: colors.textMuted }]}>
-            {item.status === 'online' ? 'Online' : item.status === 'connecting' ? 'Conectando' : item.status === 'error' ? 'Erro' : 'Offline'}
+            {getConnectionStatusText()}
           </Text>
-          {item.hasPTZ && (
-            <Icon name="video" size={12} color={colors.textMuted} />
+          {isTesting && (
+            <ActivityIndicator size="small" color={colors.warning} style={styles.testIndicator} />
+          )}
+          {!isTesting && (
+            <TouchableOpacity onPress={handleTestConnection} style={styles.testButton}>
+              <Icon name="refresh" size={12} color={colors.secondary} />
+            </TouchableOpacity>
+          )}
+          {camera.hasPTZ && (
+            <Icon name="video" size={12} color={colors.textMuted} style={styles.ptzIcon} />
           )}
         </View>
       </View>
     </TouchableOpacity>
+  );
+}
+
+export function LiveScreen(): React.ReactElement {
+  const insets = useSafeAreaInsets();
+  const navigation = useNavigation<NavigationProp>();
+  const colors = useColors();
+  const cameras = useCameraStore((state) => state.cameras);
+  const { onlineCount, offlineCount, testingCount } = useAllCamerasConnection();
+  const recordingCount = cameras.filter(c => c.isRecording).length;
+
+  const handleCameraPress = (cameraId: string) => {
+    navigation.navigate('CameraDetail', { cameraId });
+  };
+
+  const renderCameraCard = ({ item }: { item: Camera }) => (
+    <CameraCard camera={item} onPress={() => handleCameraPress(item.id)} />
   );
 
   return (
@@ -95,19 +120,19 @@ export function LiveScreen(): React.ReactElement {
       <View style={[styles.stats, { backgroundColor: colors.surface }]}>
         <View style={styles.statItem}>
           <Text style={[styles.statValue, { color: colors.secondary }]}>
-            {cameras.filter((c) => c.status === 'online').length}
+            {onlineCount}
           </Text>
           <Text style={[styles.statLabel, { color: colors.textMuted }]}>Online</Text>
         </View>
         <View style={styles.statItem}>
           <Text style={[styles.statValue, { color: colors.secondary }]}>
-            {cameras.filter((c) => c.isRecording).length}
+            {recordingCount}
           </Text>
           <Text style={[styles.statLabel, { color: colors.textMuted }]}>Gravando</Text>
         </View>
         <View style={styles.statItem}>
           <Text style={[styles.statValue, { color: colors.secondary }]}>
-            {cameras.filter((c) => c.status === 'offline').length}
+            {offlineCount}
           </Text>
           <Text style={[styles.statLabel, { color: colors.textMuted }]}>Offline</Text>
         </View>
@@ -215,5 +240,15 @@ const styles = StyleSheet.create({
   statusText: {
     fontSize: 12,
     flex: 1,
+  },
+  testIndicator: {
+    marginLeft: 8,
+  },
+  testButton: {
+    marginLeft: 8,
+    padding: 4,
+  },
+  ptzIcon: {
+    marginLeft: 8,
   },
 });
