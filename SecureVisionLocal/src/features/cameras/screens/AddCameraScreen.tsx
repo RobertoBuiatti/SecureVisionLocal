@@ -36,6 +36,7 @@ export function AddCameraScreen(): React.ReactElement {
   const [name, setName] = useState('');
   const [ip, setIp] = useState('');
   const [port, setPort] = useState('554');
+  const [ipError, setIpError] = useState('');
   const [protocol, setProtocol] = useState<CameraProtocol>('rtsp');
   const [streamUrl, setStreamUrl] = useState('');
   const [username, setUsername] = useState('');
@@ -51,6 +52,12 @@ export function AddCameraScreen(): React.ReactElement {
       Alert.alert('Erro', 'Endereço IP é obrigatório');
       return;
     }
+    const ipRegex = /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$/;
+    if (!ipRegex.test(ip.trim())) {
+      setIpError('Formato de IP inválido');
+      return;
+    }
+    setIpError('');
     if (!port.trim()) {
       Alert.alert('Erro', 'Porta é obrigatória');
       return;
@@ -137,13 +144,14 @@ export function AddCameraScreen(): React.ReactElement {
             <View style={[styles.inputGroup, { flex: 2 }]}>
               <Text style={styles.label}>Endereço IP *</Text>
               <TextInput
-                style={styles.input}
+                style={[styles.input, ipError ? styles.inputError : null]}
                 value={ip}
-                onChangeText={setIp}
+                onChangeText={(v) => { setIp(v); setIpError(''); }}
                 placeholder="192.168.1.100"
                 placeholderTextColor={colors.textMuted}
                 keyboardType="numeric"
               />
+              {ipError ? <Text style={styles.errorText}>{ipError}</Text> : null}
             </View>
             <View style={[styles.inputGroup, { flex: 1, marginLeft: spacing.md }]}>
               <Text style={styles.label}>Porta *</Text>
@@ -369,6 +377,14 @@ const styles = StyleSheet.create({
   },
   saveButtonDisabled: {
     backgroundColor: colors.border,
+  },
+  inputError: {
+    borderColor: colors.error,
+  },
+  errorText: {
+    color: colors.error,
+    fontSize: fontSize.sm,
+    marginTop: spacing.xs,
   },
   saveButtonText: {
     fontSize: fontSize.md,

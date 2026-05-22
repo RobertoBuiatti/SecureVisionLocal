@@ -4,6 +4,8 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { MainTabs } from './MainTabs';
 import { PTZControlScreen } from '@features/ptz/screens/PTZControlScreen';
 import { CameraDetailScreen } from '@features/cameras/screens/CameraDetailScreen';
+import { CameraViewScreen } from '@features/cameras/screens/CameraViewScreen';
+import { CameraSettingsScreen } from '@features/cameras/screens/CameraSettingsScreen';
 import { AddCameraScreen } from '@features/cameras/screens/AddCameraScreen';
 import { useColors } from '../theme';
 import type { RootStackParamList } from './types';
@@ -23,7 +25,9 @@ export function AppNavigator(): React.ReactElement {
         }}
       >
         <Stack.Screen name="Main" component={MainTabs} />
+        <Stack.Screen name="CameraView" component={CameraViewScreen} />
         <Stack.Screen name="CameraDetail" component={CameraDetailScreen} />
+        <Stack.Screen name="CameraSettings" component={CameraSettingsScreen} />
         <Stack.Screen name="AddCamera" component={AddCameraScreen} />
         <Stack.Screen
           name="PTZControl"

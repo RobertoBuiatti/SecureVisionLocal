@@ -181,6 +181,11 @@ class PTZService {
     }
 
     const state = this.getControlState(cameraId);
+
+    if (state.operationMode === 'AUTO_TOUR') {
+      await this.stopTour(cameraId);
+    }
+
     state.operationMode = 'AUTO_TOUR';
     state.activeTourId = tourId;
 

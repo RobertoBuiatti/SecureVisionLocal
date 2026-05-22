@@ -1,22 +1,9 @@
 import { create } from 'zustand';
-import type { Camera } from '@shared/types';
+import { persist, createJSONStorage } from 'zustand/middleware';
+import type { Recording } from '@shared/types';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export interface Recording {
-  id: string;
-  cameraId: string;
-  cameraName: string;
-  startTime: number;
-  endTime: number | null;
-  duration: number;
-  fileSize: number;
-  filePath: string;
-  thumbnail?: string;
-  hasMotion: boolean;
-  hasPerson: boolean;
-  hasVehicle: boolean;
-  status: 'recording' | 'completed' | 'corrupted';
-  type: 'continuous' | 'motion' | 'manual';
-}
+export type { Recording };
 
 interface RecordingState {
   recordings: Recording[];
@@ -36,7 +23,9 @@ interface RecordingState {
   calculateTotalSize: () => number;
 }
 
-export const useRecordingStore = create<RecordingState>((set, get) => ({
+export const useRecordingStore = create<RecordingState>()(
+  persist(
+    (set, get) => ({
   recordings: [],
   isRecording: false,
   activeRecordingId: null,
@@ -139,7 +128,13 @@ export const useRecordingStore = create<RecordingState>((set, get) => ({
   calculateTotalSize: () => {
     return get().recordings.reduce((sum, rec) => sum + rec.fileSize, 0);
   },
-}));
+}),
+    {
+      name: 'securevision-recordings',
+      storage: createJSONStorage(() => AsyncStorage),
+    }
+  )
+);
 
 function getDefaultRecordings(): Recording[] {
   return [

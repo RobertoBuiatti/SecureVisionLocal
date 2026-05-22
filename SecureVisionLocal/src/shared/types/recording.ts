@@ -1,20 +1,33 @@
 export type RecordingType = 'continuous' | 'motion' | 'event' | 'manual';
 
-export type RecordingStatus = 'recording' | 'paused' | 'stopped' | 'error';
+export type RecordingStatus = 'recording' | 'completed' | 'corrupted' | 'paused' | 'stopped' | 'error';
 
 export interface Recording {
   id: string;
   cameraId: string;
+  cameraName?: string;
   type: RecordingType;
   status: RecordingStatus;
   startTime: number;
-  endTime?: number;
+  endTime: number | null;
   duration: number;
   fileSize: number;
-  filePath: string;
+  filePath?: string;
+  filepath?: string;
+  thumbnail?: string;
   thumbnailPath?: string;
   hasMotion: boolean;
+  hasPerson?: boolean;
+  hasVehicle?: boolean;
   motionZones?: MotionZone[];
+  durationSeconds?: number;
+  quality?: 'low' | 'medium' | 'high';
+  mode?: string;
+  filename?: string;
+  date?: string;
+  motionClips?: unknown[];
+  size?: string | number;
+  sizeBytes?: number;
 }
 
 export interface MotionZone {

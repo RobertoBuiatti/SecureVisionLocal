@@ -58,13 +58,34 @@ const settingSections = [
 export function SettingsScreen({ }: Props): React.ReactElement {
   const insets = useSafeAreaInsets();
   const colors = useColors();
-  
+
   const theme = useSettingsStore((state) => state.theme);
   const setTheme = useSettingsStore((state) => state.setTheme);
+  const notifications = useSettingsStore((state) => state.notifications);
+  const toggleNotifications = useSettingsStore((state) => state.toggleNotifications);
+  const autoRecord = useSettingsStore((state) => state.autoRecord);
+  const toggleAutoRecord = useSettingsStore((state) => state.toggleAutoRecord);
 
   const handleToggle = (value: string) => {
-    if (value === 'theme') {
-      setTheme(theme === 'dark' ? 'light' : 'dark');
+    switch (value) {
+      case 'theme':
+        setTheme(theme === 'dark' ? 'light' : 'dark');
+        break;
+      case 'notifications':
+        toggleNotifications();
+        break;
+      case 'autoRecord':
+        toggleAutoRecord();
+        break;
+    }
+  };
+
+  const getToggleValue = (value: string): boolean => {
+    switch (value) {
+      case 'theme': return theme === 'dark';
+      case 'notifications': return notifications;
+      case 'autoRecord': return autoRecord;
+      default: return false;
     }
   };
 
@@ -104,10 +125,10 @@ export function SettingsScreen({ }: Props): React.ReactElement {
                     {item.description}
                   </Text>
                 </View>
-                {item.type === 'toggle' && (
+                {item.type === 'toggle' && item.value && (
                   <Switch
-                    value={item.value === 'theme' ? theme === 'dark' : false}
-                    onValueChange={() => { if (item.value) handleToggle(item.value); }}
+                    value={getToggleValue(item.value)}
+                    onValueChange={() => handleToggle(item.value)}
                     trackColor={{ false: colors.border, true: colors.primary }}
                     thumbColor="#fff"
                   />

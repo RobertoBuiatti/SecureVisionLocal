@@ -1,34 +1,8 @@
 import RNFS from 'react-native-fs';
 import { streamingService } from '../streaming/streamingService';
+import type { Recording as RecordingMetadata } from '@shared/types';
 
-interface Recording {
-  id: string;
-  cameraId: string;
-  cameraName?: string;
-  startTime: number;
-  endTime?: number | null;
-  duration: number | string;
-  durationSeconds?: number;
-  fileSize?: number;
-  sizeBytes?: number;
-  size?: string | number;
-  filePath?: string;
-  filepath?: string;
-  thumbnail?: string;
-  recordingIndex?: number;
-  hasMotion: boolean;
-  hasPerson?: boolean;
-  hasVehicle?: boolean;
-  status?: 'recording' | 'completed' | 'corrupted';
-  type?: 'continuous' | 'motion' | 'manual';
-  quality?: string;
-  mode?: string;
-  filename?: string;
-  date?: string;
-  motionClips?: unknown[];
-}
-
-export type { Recording as RecordingMetadata };
+export type { RecordingMetadata };
 
 export type RecordingMode = 'continuous' | 'motion' | 'scheduled' | 'manual';
 
@@ -68,7 +42,7 @@ export type RecordingEventCallback = (event: RecordingEvent) => void;
 
 class RecordingService {
   private static instance: RecordingService;
-  private recordings: Map<string, Recording[]> = new Map();
+  private recordings: Map<string, RecordingMetadata[]> = new Map();
   private activeRecordings: Map<string, ReturnType<typeof setInterval>> = new Map();
   private listeners: Set<RecordingEventCallback> = new Set();
   private configs: Map<string, RecordingConfig> = new Map();
@@ -156,7 +130,7 @@ class RecordingService {
         filename,
         cameraName: '',
         date: new Date(timestamp).toLocaleString('pt-BR'),
-        duration: '00:00:00',
+        duration: 0,
         size: '0 MB',
         hasMotion: false,
         startTime: timestamp,
@@ -166,6 +140,9 @@ class RecordingService {
         quality: config.quality,
         mode: config.mode,
         motionClips: [],
+        status: 'recording',
+        type: 'continuous',
+        fileSize: 0,
       });
 
       this.recordings.set(cameraId, recordings);
@@ -214,7 +191,7 @@ class RecordingService {
         
         currentRecording.endTime = endTime;
         currentRecording.durationSeconds = durationSeconds;
-        currentRecording.duration = this.formatDuration(durationSeconds);
+        currentRecording.duration = durationSeconds;
         currentRecording.sizeBytes = Math.floor(durationSeconds * 100000);
         currentRecording.size = this.formatSize(currentRecording.sizeBytes);
       }
@@ -234,12 +211,12 @@ class RecordingService {
     return this.activeRecordings.has(cameraId);
   }
 
-  public getRecordings(cameraId: string): Recording[] {
+  public getRecordings(cameraId: string): RecordingMetadata[] {
     return this.recordings.get(cameraId) || [];
   }
 
-  public getAllRecordings(): Recording[] {
-    const all: Recording[] = [];
+  public getAllRecordings(): RecordingMetadata[] {
+    const all: RecordingMetadata[] = [];
     this.recordings.forEach(recordings => {
       all.push(...recordings);
     });
@@ -257,7 +234,6 @@ class RecordingService {
         if (exists) {
           await RNFS.unlink(recording.filepath);
         }
-        recording.recordingIndex = recordings.findIndex(r => r.id === recordingId);
         recordings.splice(recordings.findIndex(r => r.id === recordingId), 1);
         console.log(`[Recording] Deleted ${recordingId}`);
         return true;
@@ -355,7 +331,7 @@ class RecordingService {
     const sizeBytes = Math.floor(durationSeconds * 100000);
 
     recording.durationSeconds = durationSeconds;
-    recording.duration = this.formatDuration(durationSeconds);
+    recording.duration = durationSeconds;
     recording.sizeBytes = sizeBytes;
     recording.size = this.formatSize(sizeBytes);
 
@@ -379,7 +355,7 @@ class RecordingService {
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
   }
 
-  public findByDateRange(cameraId: string, startDate: Date, endDate: Date): Recording[] {
+  public findByDateRange(cameraId: string, startDate: Date, endDate: Date): RecordingMetadata[] {
     const recordings = this.getRecordings(cameraId);
     return recordings.filter(r => {
       const recordTime = new Date(r.startTime);
@@ -387,9 +363,37 @@ class RecordingService {
     });
   }
 
-  public findByMotion(cameraId: string, hasMotion: boolean): Recording[] {
+  public findByMotion(cameraId: string, hasMotion: boolean): RecordingMetadata[] {
     const recordings = this.getRecordings(cameraId);
     return recordings.filter(r => r.hasMotion === hasMotion);
+  }
+
+  public addMockRecording(cameraId: string, overrides: Partial<RecordingMetadata> & { hasMotion?: boolean }): void {
+    const recordings = this.recordings.get(cameraId) || [];
+    const entry: RecordingMetadata = {
+      id: `rec_${cameraId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+      cameraId,
+      cameraName: '',
+      startTime: Date.now(),
+      endTime: null,
+      duration: 0,
+      durationSeconds: 0,
+      size: '0 MB',
+      sizeBytes: 0,
+      hasMotion: false,
+      filepath: '',
+      filename: '',
+      date: new Date().toLocaleString('pt-BR'),
+      quality: 'medium',
+      mode: 'motion',
+      motionClips: [],
+      fileSize: 0,
+      status: 'completed',
+      type: 'motion',
+      ...overrides,
+    };
+    recordings.unshift(entry);
+    this.recordings.set(cameraId, recordings);
   }
 }
 

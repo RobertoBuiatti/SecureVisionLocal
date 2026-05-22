@@ -34,39 +34,6 @@ export interface CameraStream {
   error?: string;
 }
 
-export interface PTZPreset {
-  id: string;
-  cameraId: string;
-  name: string;
-  position: number;
-  x: number;
-  y: number;
-  zoom: number;
-}
-
-export interface PTZTour {
-  id: string;
-  cameraId: string;
-  name: string;
-  presets: PTZTourPreset[];
-  speed: 'slow' | 'medium' | 'fast';
-  isActive: boolean;
-  schedule?: PTZTourSchedule;
-}
-
-export interface PTZTourPreset {
-  presetId: string;
-  duration: number;
-  order: number;
-}
-
-export interface PTZTourSchedule {
-  enabled: boolean;
-  startTime?: string;
-  endTime?: string;
-  daysOfWeek?: number[];
-}
-
 export type PTZMode = 'manual' | 'auto' | 'event' | 'scheduled' | 'sequential';
 
 export interface PTZState {

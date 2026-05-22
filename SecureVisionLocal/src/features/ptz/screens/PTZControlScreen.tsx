@@ -46,6 +46,10 @@ export function PTZControlScreen({ route, navigation }: Props): React.ReactEleme
 
   useEffect(() => {
     loadData();
+    ptzService.addListener(handlePTZEvent);
+    return () => {
+      ptzService.removeListener(handlePTZEvent);
+    };
   }, [cameraId]);
 
   const loadData = useCallback(async () => {
@@ -107,11 +111,6 @@ export function PTZControlScreen({ route, navigation }: Props): React.ReactEleme
     } else {
       setTours(cameraTours);
     }
-
-    ptzService.addListener(handlePTZEvent);
-    return () => {
-      ptzService.removeListener(handlePTZEvent);
-    };
   }, [cameraId]);
 
   const handlePTZEvent = useCallback((event: { type: string; data?: { tour?: { id?: string } } }) => {
