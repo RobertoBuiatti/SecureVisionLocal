@@ -1,238 +1,190 @@
 # Guia de Instalação - SecureVision Local
 
-## Pré-requisitos
+Este guia cobre a instalação do **software Windows** (produto principal) e do **app mobile companheiro** (Fase B).
 
-### Sistema Operacional
+---
 
-| Sistema | Versão Mínima |
-|---------|---------------|
-| Windows | Windows 10+ (WSL2) |
-| macOS | macOS 12+ |
-| Linux | Ubuntu 20.04+ |
+## Parte 1 — Software Windows
 
-### Ferramentas Obrigatórias
+### 1.1 Instalação para Usuário Final
+
+1. Baixe o instalador `SecureVisionLocal-Setup.exe` (ou `.msi`).
+2. Execute e siga o assistente (escolha a pasta de instalação).
+3. Na primeira execução, defina:
+   - Pasta/disco para **gravações** (recomenda-se um HDD/SSD dedicado).
+   - Conta de **administrador local** do sistema.
+4. Use a **descoberta automática** para localizar as câmeras WiFi na sua rede.
+
+> **Dica:** o PC deve estar na **mesma rede local** das câmeras WiFi. Para gravação 24/7, mantenha o PC ligado ou instale o **modo serviço** (ver 1.5).
+
+### 1.2 Requisitos de Sistema
+
+| Componente | Mínimo | Recomendado |
+|------------|--------|-------------|
+| SO | Windows 10 64-bit | Windows 11 64-bit |
+| CPU | Dual-core 2.0 GHz | Quad-core+ com QSV/NVENC |
+| RAM | 4 GB | 8 GB+ (16 GB p/ muitas câmeras) |
+| GPU | Integrada | Dedicada (NVIDIA/Intel/AMD) p/ aceleração |
+| Disco | 500 MB (app) + espaço p/ gravações | SSD (sistema) + HDD dedicado (gravações) |
+| Rede | WiFi/Ethernet na LAN das câmeras | Ethernet Gigabit |
+
+---
+
+## Parte 2 — Ambiente de Desenvolvimento (Software Windows)
+
+### 2.1 Ferramentas Obrigatórias
 
 | Ferramenta | Versão | Instalação |
 |------------|--------|------------|
 | Node.js | >= 22.11.0 | [nodejs.org](https://nodejs.org) |
-| npm | >= 10.x | Já Included com Node.js |
-| Java JDK | 17+ | [Adoptium](https://adoptium.net) |
-| Android Studio | Latest | [developer.android.com](https://developer.android.com/studio) |
-| Xcode | 15+ | Mac App Store (iOS only) |
+| npm | >= 10.x | Incluído com o Node.js |
+| Git | Latest | [git-scm.com](https://git-scm.com) |
+| Build Tools (C++) | Latest | `npm install --global windows-build-tools` ou Visual Studio Build Tools (necessário p/ `better-sqlite3` e nativos) |
+| Python | 3.x | Necessário para node-gyp (compilar nativos) |
+| FFmpeg | (via `ffmpeg-static`) | Instalado como dependência npm; opcionalmente FFmpeg no PATH |
 
-### Variáveis de Ambiente
+> O software roda em **Windows** nativamente — **não** use WSL para desenvolvimento, pois o acesso a hardware (GPU, rede, discos) e o empacotamento `.exe` exigem o host Windows.
 
-Adicione ao seu `~/.bashrc` ou `~/.zshrc`:
-
-```bash
-# Java
-export JAVA_HOME=/caminho/para/jdk-17
-export PATH=$JAVA_HOME/bin:$PATH
-
-# Android SDK
-export ANDROID_HOME=/cUsers/seuusuario/Library/Android/sdk
-export PATH=$ANDROID_HOME/platform-tools:$ANDROID_HOME/tools:$PATH
-```
-
-## Instalação no Windows
-
-### 1. Configure o WSL2
+### 2.2 Clonar e Instalar
 
 ```powershell
-# Abra o PowerShell como Administrador
-wsl --install
-```
-
-### 2. Configure o ambiente Linux dentro do WSL
-
-```bash
-# Atualize
-sudo apt update && sudo apt upgrade -y
-
-# Instale Node.js
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt-get install -y nodejs
-
-# Instale ferramentas adicionais
-sudo apt install -y python3 make g++ git
-```
-
-### 3. Clone e configure
-
-```bash
-cd /mnt/c/Users/rober/Desktop/SecureVisionLocalRoot/SecureVisionLocal
-
-npm install
-```
-
-## Instalação no macOS
-
-```bash
-# Instale Node.js via Homebrew
-brew install node@22
-
-# Clone o projeto
+# PowerShell
 git clone https://github.com/seu-repo/SecureVisionLocal.git
-cd SecureVisionLocal/SecureVisionLocal
+cd SecureVisionLocal\SecureVisionLocal
 
-# Instale dependências
+# Instale as dependências
 npm install
+
+# Rebuild de módulos nativos para o Electron (SQLite, ONNX)
+npm run rebuild
 ```
 
-## Instalação no Linux (Ubuntu)
+### 2.3 Executar em Desenvolvimento
+
+```powershell
+# Inicia o renderer (Vite/Metro) + Electron com hot reload
+npm run dev
+```
+
+### 2.4 Gerar o Instalador Windows
+
+```powershell
+# Build de produção + empacotamento .exe/.msi (electron-builder)
+npm run build:win
+
+# Saída em: dist/
+#   SecureVisionLocal-Setup.exe
+#   SecureVisionLocal-x.y.z.msi
+```
+
+### 2.5 Modo Serviço (Gravação 24/7)
+
+Para gravar mesmo sem login interativo, instale o componente como **serviço do Windows**:
+
+```powershell
+# Executar como Administrador
+npm run install-service       # registra o serviço SecureVisionLocal
+# Gerenciar:
+sc query SecureVisionLocal
+sc stop SecureVisionLocal
+sc start SecureVisionLocal
+```
+
+### 2.6 Aceleração por Hardware
+
+Para decodificar muitas câmeras com baixo uso de CPU, ative a aceleração em **Configurações → Desempenho**:
+
+| GPU | Backend FFmpeg |
+|-----|----------------|
+| NVIDIA | NVDEC / CUDA |
+| Intel | Quick Sync (QSV) |
+| AMD | AMF / D3D11VA |
+
+Verifique se os drivers da GPU estão atualizados.
+
+---
+
+## Parte 3 — App Mobile Companheiro (Fase B)
+
+> Concluído após o software Windows. O app é um **cliente** que se conecta ao servidor local do software.
+
+### 3.1 Ferramentas
+
+| Ferramenta | Versão |
+|------------|--------|
+| Node.js | >= 22.11.0 |
+| Java JDK | 17+ ([Adoptium](https://adoptium.net)) |
+| Android Studio | Latest (Android) |
+| Xcode | 15+ (iOS, somente macOS) |
+
+### 3.2 Build e Execução
 
 ```bash
-# Configure o repositório Node.js
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-
-# Instale o Node.js e dependências
-sudo apt-get install -y nodejs build-essential python3 libglib2.0-0
-
-# Clone e instale
-git clone https://github.com/seu-repo/SecureVisionLocal.git
-cd SecureVisionLocal/SecureVisionLocal
+cd mobile
 
 npm install
-```
 
-## Configuração do Android
-
-### 1. Android Studio
-
-1. Download Android Studio de [developer.android.com](https://developer.android.com/studio)
-2. Durante a instalação, selecione:
-   - Android SDK
-   - Android SDK Platform
-   - Android SDK Build-Tools
-   - Android SDK Platform-Tools
-
-### 2.Aceite licenças
-
-```bash
-yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses
-```
-
-### 3. Instale plataformas
-
-```bash
-$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-35" "build-tools;35.0.0"
-```
-
-## Configuração do iOS (macOS only)
-
-### 1. Instale o Xcode
-
-Baixe do Mac App Store e abra para instalar componentes.
-
-### 2. Instale CocoaPods
-
-```bash
-# Ruby (já Included no macOS)
-sudo gem install cocoapods
-
-# Instale pods do projeto
-cd SecureVisionLocal/ios
-pod install
-```
-
-## Execução
-
-### Modo Desenvolvimento
-
-```bash
-# Inicie o servidor Metro
-npm start
-
-# Build e execute no Android
+# Android
 npm run android
 
-# Build e execute no iOS
+# iOS (macOS)
+cd ios && pod install && cd ..
 npm run ios
 ```
 
-### Build de Produção
+### 3.3 Conectar ao Software Windows
 
-#### Android APK
+No app, informe o **endereço do servidor local** (IP do PC + porta, ex.: `192.168.1.10:8080`) e faça o pareamento/login. Para acesso fora da LAN, configure VPN ou DDNS (ver [docs/SECURITY.md](docs/SECURITY.md)).
 
-```bash
-# Debug APK
-cd android
-./gradlew assembleDebug
-
-# Release APK (requer assinatura)
-./gradlew assembleRelease
-```
-
-O APK será gerado em `android/app/build/outputs/apk/`
-
-#### iOS
-
-1. Abra `ios/SecureVisionLocal.xcworkspace` no Xcode
-2. Selecione Device > Build
-3. Archive para TestFlight/App Store
+---
 
 ## Solução de Problemas
 
-### "command not found: node"
-
-Desconecte e reconecte o terminal, ou adicione ao PATH:
-
-```bash
-export PATH=$PATH:/usr/local/bin:/usr/local/npm/bin
+### `node-gyp` / falha ao compilar nativos (Windows)
+Instale o Visual Studio Build Tools (workload "Desktop development with C++") e o Python 3.x, depois:
+```powershell
+npm config set msvs_version 2022
+npm run rebuild
 ```
 
-### "JAVA_HOME not set"
-
-```bash
-export JAVA_HOME=/caminho/para/jdk-17
+### `better-sqlite3` / `onnxruntime` não carrega no Electron
+Rode o rebuild para a ABI do Electron:
+```powershell
+npm run rebuild   # usa electron-rebuild
 ```
 
-### "ANDROID_HOME not set"
+### Câmera WiFi não aparece na descoberta
+- Confirme que o PC e a câmera estão na **mesma sub-rede**.
+- Verifique se o **ONVIF** está habilitado na câmera.
+- Libere as portas no Firewall do Windows (RTSP 554, ONVIF, HTTP).
+- Use a **adição manual** por URL RTSP (catálogo por fabricante).
 
-```bash
-export ANDROID_HOME=/Users/seuusuario/Library/Android/sdk
-```
+### Alto uso de CPU com muitas câmeras
+- Use **substream** na grade.
+- Ative **aceleração por hardware** (2.6).
+- Reduza FPS/resolução das câmeras secundárias.
 
-### Erro de permissão no Android
+### Disco enchendo rápido
+- Ajuste **retenção** e **reciclagem automática** em Configurações → Armazenamento.
+- Direcione gravações para um HDD dedicado.
 
-```bash
-cd android
-chmod +x gradlew
-```
-
-### Problemas com dependências nativas
-
-```bash
-# Limpe e reinstale
-rm -rf node_modules
-rm -rf android/app/build
-npm install
-```
+---
 
 ## Comandos Úteis
 
-```bash
-# Servidor Metro
-npm start
-
-# Executar Android
-npm run android
-
-# Executar iOS
-npm run ios
-
-# Executar testes
-npm test
-
-# Verificar lint
-npm run lint
-
-# Limpar build
-cd android && ./gradlew clean
+```powershell
+npm run dev            # Desenvolvimento (Electron + renderer)
+npm run build:win      # Gera instalador .exe/.msi
+npm run rebuild        # Rebuild de módulos nativos p/ Electron
+npm test               # Testes
+npm run lint           # Lint
+npm run install-service  # Instala serviço do Windows (admin)
 ```
 
 ## Links Úteis
 
-- [React Native Docs](https://reactnative.dev/docs)
-- [Android Studio](https://developer.android.com/studio)
+- [Electron](https://www.electronjs.org)
+- [electron-builder](https://www.electron.build)
+- [FFmpeg](https://ffmpeg.org)
+- [ONVIF](https://www.onvif.org)
 - [Node.js](https://nodejs.org)

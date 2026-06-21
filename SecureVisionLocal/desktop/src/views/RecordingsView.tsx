@@ -1,0 +1,101 @@
+import { useEffect, useState } from 'react';
+import { useStore } from '../store';
+import type { Recording } from '../shared/types';
+import { RecordingPlayerModal } from '../components/RecordingPlayerModal';
+
+function formatBytes(bytes: number): string {
+  if (!bytes) return '—';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let v = bytes;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  return `${v.toFixed(1)} ${units[i]}`;
+}
+
+function formatDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return `${m}m ${s}s`;
+}
+
+// Lista de gravações armazenadas localmente.
+export function RecordingsView() {
+  const recordings = useStore((s) => s.recordings);
+  const loadRecordings = useStore((s) => s.loadRecordings);
+  const [playing, setPlaying] = useState<Recording | null>(null);
+
+  useEffect(() => {
+    loadRecordings();
+  }, [loadRecordings]);
+
+  async function remove(id: string) {
+    await window.svl.recording.remove(id);
+    loadRecordings();
+  }
+
+  return (
+    <div className="view">
+      <div className="view-header">
+        <div>
+          <h2>Gravações</h2>
+          <p className="muted">Vídeos gravados em disco local.</p>
+        </div>
+        <button className="btn" onClick={loadRecordings}>
+          Atualizar
+        </button>
+      </div>
+
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Câmera</th>
+            <th>Tipo</th>
+            <th>Início</th>
+            <th>Duração</th>
+            <th>Tamanho</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {recordings.map((rec) => (
+            <tr key={rec.id}>
+              <td>{rec.cameraName ?? rec.cameraId}</td>
+              <td>{rec.type}</td>
+              <td>{new Date(rec.startTime).toLocaleString('pt-BR')}</td>
+              <td>{formatDuration(rec.duration)}</td>
+              <td>{formatBytes(rec.fileSize)}</td>
+              <td>
+                <span className={`badge ${rec.status}`}>{rec.status}</span>
+              </td>
+              <td className="rec-actions">
+                <button
+                  className="btn small primary"
+                  onClick={() => setPlaying(rec)}
+                  disabled={rec.status !== 'completed' || rec.fileSize === 0}
+                >
+                  ▶ Reproduzir
+                </button>
+                <button className="btn small danger" onClick={() => remove(rec.id)}>
+                  Excluir
+                </button>
+              </td>
+            </tr>
+          ))}
+          {recordings.length === 0 && (
+            <tr>
+              <td colSpan={7} className="muted center">
+                Nenhuma gravação ainda. Inicie uma gravação na tela Ao Vivo.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+
+      {playing && <RecordingPlayerModal recording={playing} onClose={() => setPlaying(null)} />}
+    </div>
+  );
+}

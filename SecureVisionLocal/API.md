@@ -543,4 +543,4 @@ Ou através das configurações do app.
 
 ---
 
-**Nota:** Esta API é para integração local. O app também pode funcionar 100% offline sem necessidade de um servidor backend.
+**Nota:** Esta API é exposta pelo **servidor local do software Windows** (SecureVision Local Desktop) e roda 100% offline na sua rede. Ela é consumida pelo **app mobile companheiro** (Fase B), pelo acesso via navegador na LAN e por integrações externas. O software Windows funciona sem nuvem; o app mobile é apenas um cliente desta API.

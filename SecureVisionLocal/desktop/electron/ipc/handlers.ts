@@ -1,0 +1,240 @@
+import { ipcMain, type BrowserWindow } from 'electron';
+import { IPC } from '../../src/shared/ipc';
+import type { Camera, CreateCameraDTO, PTZCommand, AppSettings } from '../../src/shared/types';
+import {
+  listCameras,
+  addCamera,
+  updateCamera,
+  removeCamera,
+  getCamera,
+} from '../core/cameraRepository';
+import { discover } from '../core/discovery';
+import { probeOnvifDevice } from '../core/onvifInfo';
+import { streamingService } from '../core/streaming';
+import { recordingService } from '../core/recording';
+import { continuousRecordingService } from '../core/continuousRecording';
+import { motionDetectionService } from '../core/motionDetection';
+import { aiDetectionService, isAiRuntimeAvailable } from '../core/ai/aiDetection';
+import { isModelReady, isDownloading, modelsDir } from '../core/ai/modelManager';
+import type { AiStatus } from '../../src/shared/types';
+import { listRecordings, getRecording, deleteRecording } from '../core/recordingRepository';
+import { controlPtz, savePresetOnvif, gotoPresetOnvif } from '../core/ptz';
+import {
+  listPresets,
+  addPreset,
+  getPreset,
+  deletePreset,
+  setPresetSnapshot,
+  listTours,
+  getTour,
+  addTour,
+  updateTour,
+  deleteTour,
+} from '../core/ptzRepository';
+import { tourRunner } from '../core/tourRunner';
+import { positionVerifier } from '../core/positionVerifier';
+import { captureJpeg, presetsSnapshotDir } from '../core/snapshotService';
+import type { PTZTourStep } from '../../src/shared/types';
+import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { testConnection } from '../core/connection';
+import { getSettings, updateSettings } from '../core/settings';
+import { getSystemStatus } from '../core/system';
+import { recordingManager } from '../core/recordingManager';
+import { getStorageUsage, enforceRetention } from '../core/retention';
+import { localServer } from '../server/localServer';
+import { getDetectionConfig, setDetectionConfig, listDetectionEvents } from '../core/detectionRepository';
+import { detectionManager } from '../core/detectionManager';
+import type { DetectionConfig } from '../../src/shared/types';
+import { unlink } from 'node:fs/promises';
+
+// Registra todos os handlers IPC (ponte UI ↔ núcleo).
+export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void {
+  // ---- Câmeras ----
+  ipcMain.handle(IPC.camerasList, () => listCameras());
+  ipcMain.handle(IPC.camerasAdd, (_e, data: CreateCameraDTO) => {
+    const camera = addCamera(data);
+    recordingManager.applyCamera(camera); // inicia 24/7 se marcado
+    return camera;
+  });
+  ipcMain.handle(IPC.camerasUpdate, (_e, id: string, updates: Partial<Camera>) => {
+    const camera = updateCamera(id, updates);
+    if (camera) recordingManager.applyCamera(camera); // liga/desliga 24/7
+    return camera;
+  });
+  ipcMain.handle(IPC.camerasRemove, (_e, id: string) => {
+    streamingService.stop(id);
+    recordingService.stop(id);
+    continuousRecordingService.stop(id);
+    tourRunner.stop(id);
+    motionDetectionService.stop(id);
+    aiDetectionService.stop(id);
+    return removeCamera(id);
+  });
+  ipcMain.handle(IPC.camerasTest, async (_e, id: string) => {
+    const camera = getCamera(id);
+    if (!camera) {
+      return { success: false, latency: null, error: 'Câmera não encontrada', timestamp: Date.now() };
+    }
+    const result = await testConnection(camera);
+    updateCamera(id, { status: result.success ? 'online' : 'offline' });
+    const win = getWindow();
+    win?.webContents.send(IPC.evtCameraStatus, {
+      cameraId: id,
+      status: result.success ? 'online' : 'offline',
+    });
+    return result;
+  });
+
+  // ---- Descoberta ----
+  ipcMain.handle(IPC.discoveryScan, (_e, opts) => discover(opts ?? {}));
+  ipcMain.handle(IPC.onvifProbe, (_e, ip: string, username: string, password: string) =>
+    probeOnvifDevice(ip, username, password),
+  );
+
+  // ---- Streaming ----
+  ipcMain.handle(IPC.streamStart, (_e, cameraId: string, quality?: 'low' | 'high') => {
+    const camera = getCamera(cameraId);
+    if (!camera) throw new Error('Câmera não encontrada');
+    return streamingService.start(camera, quality);
+  });
+  ipcMain.handle(IPC.streamStop, (_e, cameraId: string) => streamingService.stop(cameraId));
+
+  // ---- Gravação ----
+  ipcMain.handle(IPC.recordingStart, (_e, cameraId: string) => {
+    const camera = getCamera(cameraId);
+    if (!camera) throw new Error('Câmera não encontrada');
+    const rec = recordingService.start(camera, 'manual');
+    updateCamera(cameraId, { status: 'online' });
+    return rec;
+  });
+  ipcMain.handle(IPC.recordingStop, (_e, cameraId: string) => recordingService.stop(cameraId));
+  ipcMain.handle(IPC.recordingList, (_e, cameraId?: string) => listRecordings(cameraId));
+  ipcMain.handle(IPC.recordingPlayStart, (_e, recordingId: string) => {
+    const rec = getRecording(recordingId);
+    if (!rec) throw new Error('Gravação não encontrada');
+    return streamingService.startFile(recordingId, rec.filePath);
+  });
+  ipcMain.handle(IPC.recordingPlayStop, (_e, recordingId: string) =>
+    streamingService.stop(recordingId),
+  );
+  ipcMain.handle(IPC.recordingRemove, async (_e, id: string) => {
+    const rec = getRecording(id);
+    if (rec?.filePath) {
+      try {
+        await unlink(rec.filePath);
+      } catch {
+        /* arquivo já removido */
+      }
+    }
+    return deleteRecording(id);
+  });
+
+  // ---- PTZ ----
+  ipcMain.handle(IPC.ptzControl, (_e, cameraId: string, cmd: PTZCommand) => {
+    const camera = getCamera(cameraId);
+    if (!camera) return false;
+    return controlPtz(camera, cmd);
+  });
+
+  // Presets PTZ
+  ipcMain.handle(IPC.ptzSavePreset, async (_e, cameraId: string, name: string) => {
+    const camera = getCamera(cameraId);
+    if (!camera) return null;
+    const token = await savePresetOnvif(camera, name);
+    if (!token) return null;
+    const preset = addPreset(cameraId, name, token);
+    // Captura a imagem de referência da posição (a câmera já está nela).
+    const snapPath = join(presetsSnapshotDir(), `${preset.id}.jpg`);
+    const ok = await captureJpeg(camera, snapPath);
+    if (ok) {
+      setPresetSnapshot(preset.id, snapPath);
+      preset.snapshotPath = snapPath;
+    }
+    return preset;
+  });
+  ipcMain.handle(IPC.ptzListPresets, (_e, cameraId: string) => listPresets(cameraId));
+  ipcMain.handle(IPC.ptzDeletePreset, (_e, id: string) => deletePreset(id));
+  ipcMain.handle(IPC.ptzGotoPreset, (_e, cameraId: string, token: string) => {
+    const camera = getCamera(cameraId);
+    if (!camera) return false;
+    return gotoPresetOnvif(camera, token);
+  });
+
+  // Rotas (tours) PTZ — ciclo automático
+  ipcMain.handle(IPC.ptzCreateTour, (_e, cameraId: string, name: string, steps: PTZTourStep[]) =>
+    addTour(cameraId, name, steps),
+  );
+  ipcMain.handle(IPC.ptzUpdateTour, (_e, tourId: string, name: string, steps: PTZTourStep[]) =>
+    updateTour(tourId, name, steps),
+  );
+  ipcMain.handle(IPC.ptzListTours, (_e, cameraId: string) => listTours(cameraId));
+  ipcMain.handle(IPC.ptzDeleteTour, (_e, id: string) => {
+    const tour = getTour(id);
+    if (tour) tourRunner.stop(tour.cameraId);
+    return deleteTour(id);
+  });
+  ipcMain.handle(IPC.ptzStartTour, (_e, tourId: string) => {
+    const tour = getTour(tourId);
+    if (!tour) return false;
+    const camera = getCamera(tour.cameraId);
+    if (!camera) return false;
+    return tourRunner.start(camera, tour);
+  });
+  ipcMain.handle(IPC.ptzStopTour, (_e, cameraId: string) => tourRunner.stop(cameraId));
+  ipcMain.handle(IPC.ptzTourStatus, (_e, cameraId: string) => tourRunner.status(cameraId));
+  ipcMain.handle(IPC.ptzPresetSnapshot, async (_e, presetId: string) => {
+    const preset = getPreset(presetId);
+    if (!preset?.snapshotPath) return null;
+    try {
+      const buf = await readFile(preset.snapshotPath);
+      return `data:image/jpeg;base64,${buf.toString('base64')}`;
+    } catch {
+      return null;
+    }
+  });
+  ipcMain.handle(IPC.ptzVerifyPositions, (_e, cameraId: string) =>
+    positionVerifier.verifyCameraById(cameraId),
+  );
+
+  // ---- Configurações ----
+  ipcMain.handle(IPC.settingsGet, () => getSettings());
+  ipcMain.handle(IPC.settingsUpdate, (_e, updates: Partial<AppSettings>) => {
+    const updated = updateSettings(updates);
+    // Reinicia o servidor se a ativação/porta mudou.
+    if ('serverEnabled' in updates || 'serverPort' in updates) {
+      localServer.applySettings();
+    }
+    return updated;
+  });
+
+  // ---- Detecção ----
+  ipcMain.handle(IPC.detectionGetConfig, (_e, cameraId: string) => getDetectionConfig(cameraId));
+  ipcMain.handle(IPC.detectionSetConfig, (_e, cameraId: string, config: DetectionConfig) => {
+    const saved = setDetectionConfig(cameraId, config);
+    detectionManager.applyCamera(cameraId);
+    return saved;
+  });
+  ipcMain.handle(IPC.detectionListEvents, () => listDetectionEvents());
+  ipcMain.handle(IPC.detectionAiStatus, (): AiStatus => {
+    const available = isAiRuntimeAvailable();
+    const objectModel = isModelReady('object');
+    return {
+      available,
+      objectModel,
+      downloading: isDownloading(),
+      modelsDir: modelsDir(),
+      message: !available
+        ? 'Runtime de IA indisponível.'
+        : objectModel
+          ? undefined
+          : 'O modelo de IA (pessoa/animal/veículo) é baixado automaticamente ao ativar a IA.',
+    };
+  });
+
+  // ---- Sistema / Armazenamento / Servidor ----
+  ipcMain.handle(IPC.systemStatus, () => getSystemStatus());
+  ipcMain.handle(IPC.storageUsage, () => getStorageUsage());
+  ipcMain.handle(IPC.retentionRun, () => enforceRetention());
+  ipcMain.handle(IPC.serverInfo, () => localServer.getInfo());
+}

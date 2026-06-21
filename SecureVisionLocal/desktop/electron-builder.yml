@@ -1,0 +1,43 @@
+appId: com.securevision.local
+productName: SecureVision Local
+copyright: Copyright © 2026 SecureVision Local
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - dist/**/*
+  - dist-electron/**/*
+
+# Modelo de IA embutido no instalador (funciona offline, sem download).
+extraResources:
+  - from: resources/models
+    to: models
+    filter:
+      - '**/*.onnx'
+
+# Inclui o binário do FFmpeg e os módulos nativos não empacotados.
+asarUnpack:
+  - node_modules/ffmpeg-static/**/*
+  - node_modules/better-sqlite3/**/*
+  - node_modules/onnxruntime-node/**/*
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: ${productName}-Setup-${version}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: SecureVision Local
+
+# Auto-update (configurar o provider quando houver servidor de releases).
+publish:
+  provider: generic
+  url: https://example.com/securevision/updates/
