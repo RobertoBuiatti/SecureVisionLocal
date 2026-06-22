@@ -21,6 +21,7 @@ import type {
   PTZTourStatus,
   PositionCheckResult,
   ConnectionTestResult,
+  RecordingSchedule,
 } from './types';
 
 // Nomes dos canais IPC (domínio:ação).
@@ -40,6 +41,11 @@ export const IPC = {
   recordingRemove: 'recordings:remove',
   recordingPlayStart: 'recordings:play-start',
   recordingPlayStop: 'recordings:play-stop',
+  recordingExport: 'recordings:export',
+  cameraSnapshot: 'camera:snapshot',
+  scheduleList: 'schedule:list',
+  scheduleSet: 'schedule:set',
+  scheduleDelete: 'schedule:delete',
   ptzControl: 'ptz:control',
   ptzSavePreset: 'ptz:save-preset',
   ptzListPresets: 'ptz:list-presets',
@@ -100,6 +106,15 @@ export interface SvlApi {
     remove: (id: string) => Promise<boolean>;
     playStart: (recordingId: string) => Promise<StreamInfo>;
     playStop: (recordingId: string) => Promise<void>;
+    export: (id: string) => Promise<{ saved: boolean; path?: string }>;
+  };
+  snapshot: {
+    capture: (cameraId: string) => Promise<{ saved: boolean; path?: string }>;
+  };
+  schedules: {
+    list: (cameraId?: string) => Promise<RecordingSchedule[]>;
+    set: (schedule: RecordingSchedule) => Promise<RecordingSchedule>;
+    delete: (id: string) => Promise<boolean>;
   };
   ptz: {
     control: (cameraId: string, cmd: PTZCommand) => Promise<boolean>;

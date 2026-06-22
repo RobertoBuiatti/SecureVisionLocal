@@ -2,6 +2,8 @@ import { useEffect } from 'react';
 import { useStore } from '../store';
 import { Sidebar } from '../components/Sidebar';
 import { LiveView } from '../views/LiveView';
+import { DashboardView } from '../views/DashboardView';
+import { TimelineView } from '../views/TimelineView';
 import { DiscoveryView } from '../views/DiscoveryView';
 import { RecordingsView } from '../views/RecordingsView';
 import { DetectionsView } from '../views/DetectionsView';
@@ -35,6 +37,8 @@ export function App() {
       <Sidebar />
       <main className="content">
         {view === 'live' && <LiveView />}
+        {view === 'dashboard' && <DashboardView />}
+        {view === 'timeline' && <TimelineView />}
         {view === 'discovery' && <DiscoveryView />}
         {view === 'recordings' && <RecordingsView />}
         {view === 'detections' && <DetectionsView />}

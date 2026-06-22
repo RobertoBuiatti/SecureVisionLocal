@@ -100,12 +100,26 @@ function migrate(database: Database.Database): void {
       FOREIGN KEY (cameraId) REFERENCES cameras(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS recording_schedules (
+      id TEXT PRIMARY KEY,
+      cameraId TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      startTime TEXT NOT NULL,
+      endTime TEXT NOT NULL,
+      daysOfWeek TEXT NOT NULL,
+      createdAt INTEGER NOT NULL,
+      FOREIGN KEY (cameraId) REFERENCES cameras(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_schedules_camera ON recording_schedules(cameraId);
+
     CREATE INDEX IF NOT EXISTS idx_presets_camera ON ptz_presets(cameraId);
     CREATE INDEX IF NOT EXISTS idx_tours_camera ON ptz_tours(cameraId);
     CREATE INDEX IF NOT EXISTS idx_events_time ON events(timestamp);
   `);
 
   addColumnIfMissing(database, 'cameras', 'onvifPort', 'INTEGER');
+  addColumnIfMissing(database, 'cameras', 'hasOnboardTracking', 'INTEGER');
   addColumnIfMissing(database, 'ptz_presets', 'snapshotPath', 'TEXT');
   addColumnIfMissing(database, 'ptz_presets', 'lastCheckAt', 'INTEGER');
   addColumnIfMissing(database, 'ptz_presets', 'lastCheckOk', 'INTEGER');

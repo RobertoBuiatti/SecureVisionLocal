@@ -4,6 +4,8 @@ import { useStore } from '../store';
 import { Player } from './Player';
 import { PTZPad } from './PTZPad';
 import { PTZTourPanel } from './PTZTourPanel';
+import { EditCameraModal } from './EditCameraModal';
+import { ScheduleModal } from './ScheduleModal';
 
 interface CameraTileProps {
   camera: Camera;
@@ -14,9 +16,22 @@ export function CameraTile({ camera }: CameraTileProps) {
   const [recording, setRecording] = useState(false);
   const [showPtz, setShowPtz] = useState(false);
   const [showTour, setShowTour] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
+  const [showSchedule, setShowSchedule] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [snapping, setSnapping] = useState(false);
   const toggleContinuous = useStore((s) => s.toggleContinuous);
   const removeCamera = useStore((s) => s.removeCamera);
+
+  async function handleSnapshot() {
+    setSnapping(true);
+    try {
+      const res = await window.svl.snapshot.capture(camera.id);
+      if (res.saved) alert(`Snapshot salvo em:\n${res.path}`);
+    } finally {
+      setSnapping(false);
+    }
+  }
 
   async function handleRemove() {
     const ok = window.confirm(`Remover a câmera "${camera.name}"? As gravações em disco não são apagadas.`);
@@ -86,9 +101,20 @@ export function CameraTile({ camera }: CameraTileProps) {
         >
           24/7
         </button>
+        <button className="btn" onClick={handleSnapshot} disabled={snapping} title="Capturar imagem">
+          {snapping ? '…' : '📷'}
+        </button>
+        <button className="btn" onClick={() => setShowSchedule(true)} title="Agendar gravação">
+          🗓
+        </button>
+        <button className="btn" onClick={() => setShowEdit(true)} title="Editar configurações">
+          ⚙
+        </button>
         <span className="tile-ip">{camera.ip}</span>
       </div>
       {showTour && <PTZTourPanel cameraId={camera.id} onClose={() => setShowTour(false)} />}
+      {showEdit && <EditCameraModal camera={camera} onClose={() => setShowEdit(false)} />}
+      {showSchedule && <ScheduleModal camera={camera} onClose={() => setShowSchedule(false)} />}
     </div>
   );
 }

@@ -74,6 +74,30 @@ interface EventRow {
   meta: string | null;
 }
 
+// Eventos de uma câmera dentro de um intervalo de tempo (para marcar na gravação).
+export function listEventsBetween(cameraId: string, from: number, to: number): DetectionEvent[] {
+  const rows = getDb()
+    .prepare(
+      'SELECT * FROM events WHERE cameraId = ? AND timestamp >= ? AND timestamp <= ? ORDER BY timestamp ASC',
+    )
+    .all(cameraId, from, to) as EventRow[];
+  return rows.map((r) => {
+    let score: number | undefined;
+    try {
+      score = r.meta ? JSON.parse(r.meta).score : undefined;
+    } catch {
+      score = undefined;
+    }
+    return {
+      id: r.id,
+      cameraId: r.cameraId,
+      type: r.type as DetectionEvent['type'],
+      timestamp: r.timestamp,
+      score,
+    };
+  });
+}
+
 export function listDetectionEvents(limit = 200): DetectionEvent[] {
   const rows = getDb()
     .prepare('SELECT * FROM events ORDER BY timestamp DESC LIMIT ?')

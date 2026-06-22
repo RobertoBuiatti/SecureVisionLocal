@@ -19,7 +19,7 @@ export function RecordingPlayerModal({ recording, onClose }: Props) {
       try {
         const info = await window.svl.recording.playStart(recording.id);
         if (cancelled || !canvasRef.current) return;
-        playerRef.current = new JSMpeg.Player(`ws://127.0.0.1:${info.wsPort}`, {
+        playerRef.current = new JSMpeg.Player(`ws://localhost:${info.wsPort}`, {
           canvas: canvasRef.current,
           audio: false,
           autoplay: true,

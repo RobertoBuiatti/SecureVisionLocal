@@ -1,11 +1,10 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import ffmpegStatic from 'ffmpeg-static';
+import { FFMPEG_PATH } from '../core/ffmpegPath';
 import type { Camera } from '../../src/shared/types';
 import { getDataDir } from '../core/paths';
 
-const FFMPEG_PATH: string = (ffmpegStatic as unknown as string) || 'ffmpeg';
 const IDLE_TIMEOUT_MS = 30_000; // encerra a sessão após 30s sem acessos
 
 interface HlsSession {

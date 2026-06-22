@@ -20,6 +20,7 @@ interface CameraRow {
   status: string;
   hasPTZ: number;
   hasAudio: number;
+  hasOnboardTracking: number | null;
   presetCount: number;
   recordContinuous: number;
   createdAt: number;
@@ -44,6 +45,7 @@ function rowToCamera(r: CameraRow): Camera {
     status: r.status as Camera['status'],
     hasPTZ: !!r.hasPTZ,
     hasAudio: !!r.hasAudio,
+    hasOnboardTracking: !!r.hasOnboardTracking,
     presetCount: r.presetCount,
     recordContinuous: !!r.recordContinuous,
     createdAt: r.createdAt,
@@ -79,6 +81,7 @@ export function addCamera(dto: CreateCameraDTO): Camera {
     status: 'offline',
     hasPTZ: dto.hasPTZ ?? false,
     hasAudio: dto.hasAudio ?? false,
+    hasOnboardTracking: dto.hasOnboardTracking ?? false,
     presetCount: 0,
     recordContinuous: dto.recordContinuous ?? false,
     createdAt: now,
@@ -90,11 +93,11 @@ export function addCamera(dto: CreateCameraDTO): Camera {
       `INSERT INTO cameras
         (id, name, ip, port, protocol, type, manufacturer, username, password,
          streamUrl, subStreamUrl, onvifProfile, onvifPort, status, hasPTZ, hasAudio,
-         presetCount, recordContinuous, createdAt, updatedAt)
+         hasOnboardTracking, presetCount, recordContinuous, createdAt, updatedAt)
        VALUES
         (@id, @name, @ip, @port, @protocol, @type, @manufacturer, @username, @password,
          @streamUrl, @subStreamUrl, @onvifProfile, @onvifPort, @status, @hasPTZ, @hasAudio,
-         @presetCount, @recordContinuous, @createdAt, @updatedAt)`,
+         @hasOnboardTracking, @presetCount, @recordContinuous, @createdAt, @updatedAt)`,
     )
     .run({
       ...camera,
@@ -106,6 +109,7 @@ export function addCamera(dto: CreateCameraDTO): Camera {
       onvifPort: camera.onvifPort ?? null,
       hasPTZ: camera.hasPTZ ? 1 : 0,
       hasAudio: camera.hasAudio ? 1 : 0,
+      hasOnboardTracking: camera.hasOnboardTracking ? 1 : 0,
       recordContinuous: camera.recordContinuous ? 1 : 0,
     });
 
@@ -124,6 +128,7 @@ export function updateCamera(id: string, updates: Partial<Camera>): Camera | nul
         manufacturer=@manufacturer, username=@username, password=@password,
         streamUrl=@streamUrl, subStreamUrl=@subStreamUrl, onvifProfile=@onvifProfile,
         onvifPort=@onvifPort, status=@status, hasPTZ=@hasPTZ, hasAudio=@hasAudio,
+        hasOnboardTracking=@hasOnboardTracking,
         presetCount=@presetCount, recordContinuous=@recordContinuous, updatedAt=@updatedAt
        WHERE id=@id`,
     )
@@ -137,6 +142,7 @@ export function updateCamera(id: string, updates: Partial<Camera>): Camera | nul
       onvifPort: merged.onvifPort ?? null,
       hasPTZ: merged.hasPTZ ? 1 : 0,
       hasAudio: merged.hasAudio ? 1 : 0,
+      hasOnboardTracking: merged.hasOnboardTracking ? 1 : 0,
       recordContinuous: merged.recordContinuous ? 1 : 0,
     });
 

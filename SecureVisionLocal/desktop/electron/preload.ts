@@ -32,6 +32,15 @@ const api: SvlApi = {
     remove: (id) => ipcRenderer.invoke(IPC.recordingRemove, id),
     playStart: (recordingId) => ipcRenderer.invoke(IPC.recordingPlayStart, recordingId),
     playStop: (recordingId) => ipcRenderer.invoke(IPC.recordingPlayStop, recordingId),
+    export: (id) => ipcRenderer.invoke(IPC.recordingExport, id),
+  },
+  snapshot: {
+    capture: (cameraId) => ipcRenderer.invoke(IPC.cameraSnapshot, cameraId),
+  },
+  schedules: {
+    list: (cameraId) => ipcRenderer.invoke(IPC.scheduleList, cameraId),
+    set: (schedule) => ipcRenderer.invoke(IPC.scheduleSet, schedule),
+    delete: (id) => ipcRenderer.invoke(IPC.scheduleDelete, id),
   },
   ptz: {
     control: (cameraId, cmd) => ipcRenderer.invoke(IPC.ptzControl, cameraId, cmd),

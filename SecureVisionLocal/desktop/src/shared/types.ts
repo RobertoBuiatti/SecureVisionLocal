@@ -23,6 +23,7 @@ export interface Camera {
   status: CameraStatus;
   hasPTZ: boolean;
   hasAudio: boolean;
+  hasOnboardTracking: boolean; // a câmera segue objetos sozinha (auto-track no firmware)
   presetCount: number;
   recordContinuous: boolean;
   createdAt: number;
@@ -44,6 +45,7 @@ export interface CreateCameraDTO {
   onvifPort?: number;
   hasPTZ?: boolean;
   hasAudio?: boolean;
+  hasOnboardTracking?: boolean;
   recordContinuous?: boolean;
 }
 
@@ -121,6 +123,21 @@ export interface AppSettings {
   serverEnabled: boolean; // servidor local (app mobile / navegador na LAN)
   serverPort: number;
   serverToken: string; // token de acesso (gerado na 1ª execução)
+  notificationsEnabled: boolean; // notificações nativas do Windows em detecções
+  webhookUrl: string; // URL opcional p/ POST de alerta em cada detecção (vazio = desativado)
+  overlayDetectionMarks: boolean; // queima traços finos das detecções no vídeo (clipes por evento)
+}
+
+// ---- Agendamento de gravação ----
+
+export interface RecordingSchedule {
+  id: string;
+  cameraId: string;
+  enabled: boolean;
+  startTime: string; // 'HH:MM' (início da janela de gravação)
+  endTime: string; // 'HH:MM' (fim; se < início, cruza a meia-noite)
+  daysOfWeek: number[]; // 0=domingo … 6=sábado
+  createdAt: number;
 }
 
 export interface ServerInfo {

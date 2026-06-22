@@ -1,7 +1,14 @@
 import { create } from 'zustand';
 import type { Camera, DiscoveredCamera, Recording, SystemStatus, AppSettings } from './shared/types';
 
-export type View = 'live' | 'recordings' | 'detections' | 'discovery' | 'settings';
+export type View =
+  | 'live'
+  | 'dashboard'
+  | 'timeline'
+  | 'recordings'
+  | 'detections'
+  | 'discovery'
+  | 'settings';
 
 interface AppState {
   view: View;
@@ -24,6 +31,7 @@ interface AppState {
   loadSettings: () => Promise<void>;
   scan: () => Promise<void>;
   addCamera: (cam: Camera) => void;
+  updateCameraFields: (id: string, updates: Partial<Camera>) => Promise<void>;
   removeCamera: (id: string) => Promise<void>;
   setCameraStatus: (id: string, status: Camera['status']) => void;
   toggleContinuous: (id: string, value: boolean) => Promise<void>;
@@ -41,7 +49,11 @@ export const useStore = create<AppState>((set, get) => ({
   selectedCameraId: null,
 
   setView: (view) => set({ view }),
-  setGridLayout: (gridLayout) => set({ gridLayout }),
+  setGridLayout: (gridLayout) => {
+    set({ gridLayout });
+    // Persiste o layout escolhido para reabrir o app no mesmo formato.
+    void window.svl.settings.update({ gridLayout });
+  },
   selectCamera: (selectedCameraId) => set({ selectedCameraId }),
 
   loadCameras: async () => {
@@ -70,6 +82,11 @@ export const useStore = create<AppState>((set, get) => ({
     }
   },
   addCamera: (cam) => set({ cameras: [...get().cameras, cam] }),
+  updateCameraFields: async (id, updates) => {
+    const updated = await window.svl.cameras.update(id, updates);
+    if (!updated) return;
+    set({ cameras: get().cameras.map((c) => (c.id === id ? updated : c)) });
+  },
   removeCamera: async (id) => {
     await window.svl.cameras.remove(id);
     set({ cameras: get().cameras.filter((c) => c.id !== id) });

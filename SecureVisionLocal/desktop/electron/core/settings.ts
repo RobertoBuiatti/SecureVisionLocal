@@ -17,6 +17,9 @@ function defaults(): AppSettings {
     serverEnabled: true,
     serverPort: 8080,
     serverToken: '',
+    notificationsEnabled: true,
+    webhookUrl: '',
+    overlayDetectionMarks: true,
   };
 }
 

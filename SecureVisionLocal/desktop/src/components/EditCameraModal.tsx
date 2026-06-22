@@ -1,37 +1,25 @@
 import { useState } from 'react';
-import type { CreateCameraDTO, DiscoveredCamera } from '../shared/types';
+import type { Camera } from '../shared/types';
 import { useStore } from '../store';
 
-interface AddCameraModalProps {
-  prefill?: DiscoveredCamera;
+interface EditCameraModalProps {
+  camera: Camera;
   onClose: () => void;
 }
 
-// Formulário de adição de câmera. Pré-preenche dados vindos da descoberta na rede.
-export function AddCameraModal({ prefill, onClose }: AddCameraModalProps) {
-  const addCamera = useStore((s) => s.addCamera);
-  const defaultRtsp = prefill?.rtspUrls?.[0] ?? '';
-  const [form, setForm] = useState<CreateCameraDTO>({
-    name: prefill?.name ?? prefill?.model ?? `Câmera ${prefill?.ip ?? ''}`.trim(),
-    ip: prefill?.ip ?? '',
-    port: prefill?.port ?? 554,
-    protocol: 'rtsp',
-    manufacturer: prefill?.manufacturer,
-    username: '',
-    password: '',
-    streamUrl: defaultRtsp,
-    hasPTZ: false,
-    recordContinuous: false,
-  });
+// Edição das configurações de uma câmera já cadastrada. Reaproveita o probe ONVIF
+// para reobter as URLs reais caso o usuário troque credenciais.
+export function EditCameraModal({ camera, onClose }: EditCameraModalProps) {
+  const updateCameraFields = useStore((s) => s.updateCameraFields);
+  const [form, setForm] = useState<Camera>({ ...camera });
   const [saving, setSaving] = useState(false);
   const [probing, setProbing] = useState(false);
   const [probeMsg, setProbeMsg] = useState<string | null>(null);
 
-  function set<K extends keyof CreateCameraDTO>(key: K, value: CreateCameraDTO[K]) {
+  function set<K extends keyof Camera>(key: K, value: Camera[K]) {
     setForm((f) => ({ ...f, [key]: value }));
   }
 
-  // Consulta a câmera via ONVIF e preenche marca/modelo/PTZ + a URL RTSP REAL.
   async function probeOnvif() {
     if (!form.ip) {
       setProbeMsg('Informe o IP da câmera.');
@@ -42,7 +30,7 @@ export function AddCameraModal({ prefill, onClose }: AddCameraModalProps) {
     try {
       const info = await window.svl.discovery.probeOnvif(form.ip, form.username ?? '', form.password ?? '');
       if (!info || !info.streamUri) {
-        setProbeMsg('Não respondeu via ONVIF. Verifique usuário/senha (ou adicione a URL manualmente).');
+        setProbeMsg('Não respondeu via ONVIF. Verifique usuário/senha (ou edite a URL manualmente).');
         return;
       }
       setForm((f) => ({
@@ -52,11 +40,8 @@ export function AddCameraModal({ prefill, onClose }: AddCameraModalProps) {
         manufacturer: info.manufacturer ?? f.manufacturer,
         onvifPort: info.onvifPort ?? f.onvifPort,
         hasPTZ: info.hasPTZ,
-        name: f.name && !f.name.startsWith('Câmera ') ? f.name : info.model ?? f.name,
       }));
-      setProbeMsg(
-        `✓ ${info.manufacturer ?? ''} ${info.model ?? ''} — URL de stream obtida automaticamente.`,
-      );
+      setProbeMsg(`✓ ${info.manufacturer ?? ''} ${info.model ?? ''} — URLs atualizadas.`);
     } catch {
       setProbeMsg('Erro ao consultar ONVIF.');
     } finally {
@@ -64,18 +49,23 @@ export function AddCameraModal({ prefill, onClose }: AddCameraModalProps) {
     }
   }
 
-  // Monta a URL RTSP com credenciais se o usuário não informou uma URL completa.
-  function buildStreamUrl(): string {
-    if (form.streamUrl) return form.streamUrl;
-    const auth = form.username ? `${form.username}:${form.password ?? ''}@` : '';
-    return `rtsp://${auth}${form.ip}:${form.port}/`;
-  }
-
   async function handleSave() {
     setSaving(true);
     try {
-      const camera = await window.svl.cameras.add({ ...form, streamUrl: buildStreamUrl() });
-      addCamera(camera);
+      await updateCameraFields(camera.id, {
+        name: form.name,
+        ip: form.ip,
+        port: form.port,
+        username: form.username,
+        password: form.password,
+        streamUrl: form.streamUrl,
+        subStreamUrl: form.subStreamUrl,
+        onvifPort: form.onvifPort,
+        hasPTZ: form.hasPTZ,
+        hasAudio: form.hasAudio,
+        hasOnboardTracking: form.hasOnboardTracking,
+        recordContinuous: form.recordContinuous,
+      });
       onClose();
     } finally {
       setSaving(false);
@@ -85,7 +75,7 @@ export function AddCameraModal({ prefill, onClose }: AddCameraModalProps) {
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h3>Adicionar câmera</h3>
+        <h3>Editar câmera</h3>
         <label>
           Nome
           <input value={form.name} onChange={(e) => set('name', e.target.value)} />
@@ -107,30 +97,46 @@ export function AddCameraModal({ prefill, onClose }: AddCameraModalProps) {
         <div className="row">
           <label>
             Usuário
-            <input value={form.username} onChange={(e) => set('username', e.target.value)} />
+            <input value={form.username ?? ''} onChange={(e) => set('username', e.target.value)} />
           </label>
           <label>
             Senha
             <input
               type="password"
-              value={form.password}
+              value={form.password ?? ''}
               onChange={(e) => set('password', e.target.value)}
             />
           </label>
         </div>
         <div className="onvif-probe">
           <button className="btn" onClick={probeOnvif} disabled={probing || !form.ip}>
-            {probing ? 'Buscando…' : '🔎 Buscar dados (ONVIF)'}
+            {probing ? 'Buscando…' : '🔎 Reobter dados (ONVIF)'}
           </button>
-          <span className="muted">Preenche marca, modelo, PTZ e a URL RTSP real automaticamente.</span>
+          <span className="muted">Atualiza marca, PTZ e as URLs RTSP automaticamente.</span>
         </div>
         {probeMsg && <p className="probe-msg">{probeMsg}</p>}
         <label>
-          URL RTSP (gerada via ONVIF ou manual)
+          URL RTSP (principal)
           <input
             value={form.streamUrl}
             placeholder="rtsp://usuario:senha@ip:554/stream"
             onChange={(e) => set('streamUrl', e.target.value)}
+          />
+        </label>
+        <label>
+          URL do substream (usado na grade — opcional)
+          <input
+            value={form.subStreamUrl ?? ''}
+            placeholder="rtsp://usuario:senha@ip:554/substream"
+            onChange={(e) => set('subStreamUrl', e.target.value)}
+          />
+        </label>
+        <label>
+          Porta ONVIF (PTZ — opcional)
+          <input
+            type="number"
+            value={form.onvifPort ?? 0}
+            onChange={(e) => set('onvifPort', Number(e.target.value) || undefined)}
           />
         </label>
         <div className="row checks">
@@ -145,6 +151,14 @@ export function AddCameraModal({ prefill, onClose }: AddCameraModalProps) {
           <label className="check">
             <input
               type="checkbox"
+              checked={form.hasAudio}
+              onChange={(e) => set('hasAudio', e.target.checked)}
+            />
+            Possui áudio
+          </label>
+          <label className="check">
+            <input
+              type="checkbox"
               checked={form.recordContinuous}
               onChange={(e) => set('recordContinuous', e.target.checked)}
             />
@@ -155,7 +169,7 @@ export function AddCameraModal({ prefill, onClose }: AddCameraModalProps) {
           <label className="check">
             <input
               type="checkbox"
-              checked={form.hasOnboardTracking ?? false}
+              checked={form.hasOnboardTracking}
               onChange={(e) => set('hasOnboardTracking', e.target.checked)}
             />
             A câmera já segue objetos sozinha (auto-track) — o software não comanda o PTZ
@@ -166,7 +180,7 @@ export function AddCameraModal({ prefill, onClose }: AddCameraModalProps) {
             Cancelar
           </button>
           <button className="btn primary" onClick={handleSave} disabled={saving || !form.ip}>
-            {saving ? 'Salvando...' : 'Adicionar'}
+            {saving ? 'Salvando…' : 'Salvar'}
           </button>
         </div>
       </div>

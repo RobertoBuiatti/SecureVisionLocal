@@ -2,12 +2,11 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import ffmpegStatic from 'ffmpeg-static';
+import { FFMPEG_PATH } from './ffmpegPath';
 import type { Camera, Recording } from '../../src/shared/types';
 import { getSettings } from './settings';
 import { insertRecording, finalizeRecording } from './recordingRepository';
-
-const FFMPEG_PATH: string = (ffmpegStatic as unknown as string) || 'ffmpeg';
+import { overlayDetections } from './markRecording';
 
 interface ActiveRecording {
   recording: Recording;
@@ -108,12 +107,20 @@ export class RecordingService {
     } catch {
       /* arquivo pode não existir se falhou cedo */
     }
+    const duration = Math.round((endTime - item.recording.startTime) / 1000);
+    const completed = fileSize > 0;
     finalizeRecording(item.recording.id, {
       endTime,
-      duration: Math.round((endTime - item.recording.startTime) / 1000),
+      duration,
       fileSize,
-      status: fileSize > 0 ? 'completed' : 'error',
+      status: completed ? 'completed' : 'error',
     });
+
+    // Marca as detecções no próprio vídeo (traços finos), se habilitado. Só em clipes
+    // por evento/movimento/manual — nunca nos segmentos 24/7 (preserva o baixo CPU).
+    if (completed && item.recording.type !== 'continuous' && getSettings().overlayDetectionMarks) {
+      void overlayDetections({ ...item.recording, endTime, duration, fileSize, status: 'completed' });
+    }
   }
 }
 

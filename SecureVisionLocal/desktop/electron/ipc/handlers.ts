@@ -1,6 +1,12 @@
-import { ipcMain, type BrowserWindow } from 'electron';
+import { ipcMain, dialog, type BrowserWindow } from 'electron';
 import { IPC } from '../../src/shared/ipc';
-import type { Camera, CreateCameraDTO, PTZCommand, AppSettings } from '../../src/shared/types';
+import type {
+  Camera,
+  CreateCameraDTO,
+  PTZCommand,
+  AppSettings,
+  RecordingSchedule,
+} from '../../src/shared/types';
 import {
   listCameras,
   addCamera,
@@ -18,7 +24,7 @@ import { aiDetectionService, isAiRuntimeAvailable } from '../core/ai/aiDetection
 import { isModelReady, isDownloading, modelsDir } from '../core/ai/modelManager';
 import type { AiStatus } from '../../src/shared/types';
 import { listRecordings, getRecording, deleteRecording } from '../core/recordingRepository';
-import { controlPtz, savePresetOnvif, gotoPresetOnvif } from '../core/ptz';
+import { controlPtz, savePresetOnvif, gotoPresetOnvif, disconnectCamera } from '../core/ptz';
 import {
   listPresets,
   addPreset,
@@ -36,7 +42,8 @@ import { positionVerifier } from '../core/positionVerifier';
 import { captureJpeg, presetsSnapshotDir } from '../core/snapshotService';
 import type { PTZTourStep } from '../../src/shared/types';
 import { join } from 'node:path';
-import { readFile } from 'node:fs/promises';
+import { readFile, copyFile } from 'node:fs/promises';
+import { listSchedules, upsertSchedule, deleteSchedule } from '../core/scheduleRepository';
 import { testConnection } from '../core/connection';
 import { getSettings, updateSettings } from '../core/settings';
 import { getSystemStatus } from '../core/system';
@@ -60,6 +67,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   ipcMain.handle(IPC.camerasUpdate, (_e, id: string, updates: Partial<Camera>) => {
     const camera = updateCamera(id, updates);
     if (camera) recordingManager.applyCamera(camera); // liga/desliga 24/7
+    disconnectCamera(id); // invalida sessão ONVIF (IP/credenciais podem ter mudado)
     return camera;
   });
   ipcMain.handle(IPC.camerasRemove, (_e, id: string) => {
@@ -69,6 +77,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     tourRunner.stop(id);
     motionDetectionService.stop(id);
     aiDetectionService.stop(id);
+    disconnectCamera(id); // encerra sessão ONVIF e watchdog pendente
     return removeCamera(id);
   });
   ipcMain.handle(IPC.camerasTest, async (_e, id: string) => {
@@ -129,6 +138,55 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     }
     return deleteRecording(id);
   });
+
+  // Abre o diálogo "Salvar como" usando a janela principal quando disponível.
+  async function askSavePath(opts: Electron.SaveDialogOptions): Promise<string | null> {
+    const win = getWindow();
+    const result = win
+      ? await dialog.showSaveDialog(win, opts)
+      : await dialog.showSaveDialog(opts);
+    return result.canceled || !result.filePath ? null : result.filePath;
+  }
+
+  // Exportar/baixar um clipe de gravação para a pasta escolhida pelo usuário.
+  ipcMain.handle(IPC.recordingExport, async (_e, id: string) => {
+    const rec = getRecording(id);
+    if (!rec?.filePath) return { saved: false };
+    const ts = new Date(rec.startTime).toISOString().replace(/[:.]/g, '-');
+    const dest = await askSavePath({
+      title: 'Exportar gravação',
+      defaultPath: `${rec.cameraName ?? rec.cameraId}_${ts}.mp4`,
+      filters: [{ name: 'Vídeo MP4', extensions: ['mp4'] }],
+    });
+    if (!dest) return { saved: false };
+    await copyFile(rec.filePath, dest);
+    return { saved: true, path: dest };
+  });
+
+  // ---- Snapshot ao vivo ----
+  ipcMain.handle(IPC.cameraSnapshot, async (_e, cameraId: string) => {
+    const camera = getCamera(cameraId);
+    if (!camera) return { saved: false };
+    const ts = new Date().toISOString().replace(/[:.]/g, '-');
+    const dest = await askSavePath({
+      title: 'Salvar snapshot',
+      defaultPath: `${camera.name}_${ts}.jpg`,
+      filters: [{ name: 'Imagem JPEG', extensions: ['jpg'] }],
+    });
+    if (!dest) return { saved: false };
+    const ok = await captureJpeg(camera, dest);
+    return ok ? { saved: true, path: dest } : { saved: false };
+  });
+
+  // ---- Agendamento de gravação ----
+  ipcMain.handle(IPC.scheduleList, (_e, cameraId?: string) => listSchedules(cameraId));
+  ipcMain.handle(IPC.scheduleSet, (_e, schedule: RecordingSchedule) => {
+    const saved = upsertSchedule(schedule);
+    const camera = getCamera(saved.cameraId);
+    if (camera) recordingManager.applyCamera(camera); // aplica a janela imediatamente
+    return saved;
+  });
+  ipcMain.handle(IPC.scheduleDelete, (_e, id: string) => deleteSchedule(id));
 
   // ---- PTZ ----
   ipcMain.handle(IPC.ptzControl, (_e, cameraId: string, cmd: PTZCommand) => {

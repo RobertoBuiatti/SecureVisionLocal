@@ -36,6 +36,11 @@ export function RecordingsView() {
     loadRecordings();
   }
 
+  async function exportRec(id: string) {
+    const res = await window.svl.recording.export(id);
+    if (res.saved) alert(`Gravação exportada para:\n${res.path}`);
+  }
+
   return (
     <div className="view">
       <div className="view-header">
@@ -78,6 +83,14 @@ export function RecordingsView() {
                   disabled={rec.status !== 'completed' || rec.fileSize === 0}
                 >
                   ▶ Reproduzir
+                </button>
+                <button
+                  className="btn small"
+                  onClick={() => exportRec(rec.id)}
+                  disabled={rec.fileSize === 0}
+                  title="Exportar para uma pasta"
+                >
+                  ⬇ Exportar
                 </button>
                 <button className="btn small danger" onClick={() => remove(rec.id)}>
                   Excluir

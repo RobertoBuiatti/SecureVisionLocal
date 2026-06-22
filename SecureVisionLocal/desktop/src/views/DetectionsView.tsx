@@ -10,7 +10,15 @@ const TYPE_LABEL: Record<string, string> = {
 };
 
 // Card de configuração de detecção de uma câmera.
-function CameraDetectionCard({ cameraId, cameraName }: { cameraId: string; cameraName: string }) {
+function CameraDetectionCard({
+  cameraId,
+  cameraName,
+  onboardTracking,
+}: {
+  cameraId: string;
+  cameraName: string;
+  onboardTracking: boolean;
+}) {
   const [cfg, setCfg] = useState<DetectionConfig | null>(null);
 
   useEffect(() => {
@@ -105,7 +113,14 @@ function CameraDetectionCard({ cameraId, cameraName }: { cameraId: string; camer
           />
           Acompanhar (PTZ) o objeto detectado
         </label>
-        {cfg.trackEnabled && cfg.aiEnabled && (
+        {cfg.trackEnabled && cfg.aiEnabled && onboardTracking && (
+          <p className="probe-msg">
+            ⚠ Esta câmera está marcada como tendo rastreamento próprio — quem segue o objeto é a
+            câmera. O software não envia comandos PTZ (evita conflito). Desmarque "auto-track" na
+            edição da câmera para o software assumir o controle.
+          </p>
+        )}
+        {cfg.trackEnabled && cfg.aiEnabled && !onboardTracking && (
           <label className="track-dur">
             por
             <input
@@ -172,7 +187,12 @@ export function DetectionsView() {
 
       <div className="det-cards">
         {cameras.map((c) => (
-          <CameraDetectionCard key={c.id} cameraId={c.id} cameraName={c.name} />
+          <CameraDetectionCard
+            key={c.id}
+            cameraId={c.id}
+            cameraName={c.name}
+            onboardTracking={c.hasOnboardTracking}
+          />
         ))}
         {cameras.length === 0 && <p className="muted">Adicione câmeras para configurar detecções.</p>}
       </div>

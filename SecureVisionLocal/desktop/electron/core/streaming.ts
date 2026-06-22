@@ -1,10 +1,11 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { WebSocketServer } from 'ws';
-import ffmpegStatic from 'ffmpeg-static';
+import { FFMPEG_PATH } from './ffmpegPath';
 import type { Camera, StreamInfo } from '../../src/shared/types';
 
-const FFMPEG_PATH: string = (ffmpegStatic as unknown as string) || 'ffmpeg';
 const RECONNECT_DELAY_MS = 3000;
+const STALL_TIMEOUT_MS = 8000; // sem novos quadros por mais que isto = travado → reinicia
+const WATCHDOG_INTERVAL_MS = 3000; // frequência de checagem do travamento
 
 interface ActiveStream {
   cameraId: string;
@@ -17,6 +18,8 @@ interface ActiveStream {
   quality?: 'low' | 'high';
   isFile?: boolean;
   reconnectTimer?: ReturnType<typeof setTimeout>;
+  lastDataAt: number; // instante do último quadro recebido (para o watchdog de travamento)
+  watchdog?: ReturnType<typeof setInterval>;
 }
 
 export type StreamStatusEvent = {
@@ -68,15 +71,53 @@ export class StreamingService {
       stopping: false,
       camera,
       quality,
+      lastDataAt: Date.now(),
     };
     this.streams.set(camera.id, state);
     this.spawnCameraFfmpeg(state);
+    this.startWatchdog(state);
     return { cameraId: camera.id, wsPort, status: 'starting' };
+  }
+
+  // Vigia o fluxo de quadros: se o FFmpeg parar de enviar dados (mas continuar vivo —
+  // típico de um congelamento por hiccup do RTSP), reinicia o processo. Sem isto o
+  // vídeo "trava" no último quadro porque o evento 'close' nunca dispara.
+  private startWatchdog(state: ActiveStream): void {
+    if (state.watchdog) return;
+    state.watchdog = setInterval(() => {
+      if (state.stopping || !state.ffmpeg || state.reconnectTimer) return;
+      if (Date.now() - state.lastDataAt > STALL_TIMEOUT_MS) {
+        this.notifier?.({
+          cameraId: state.cameraId,
+          status: 'error',
+          error: 'Vídeo travou. Reiniciando…',
+        });
+        this.restartStalled(state);
+      }
+    }, WATCHDOG_INTERVAL_MS);
+  }
+
+  // Reinicia o FFmpeg de um stream travado sem disparar a reconexão dupla do 'close'.
+  private restartStalled(state: ActiveStream): void {
+    const old = state.ffmpeg;
+    state.ffmpeg = null;
+    if (old) {
+      old.removeAllListeners('close');
+      old.removeAllListeners('error');
+      try {
+        old.kill('SIGKILL');
+      } catch {
+        /* noop */
+      }
+    }
+    state.gotData = false;
+    this.spawnCameraFfmpeg(state); // reinicia já (sem esperar o backoff)
   }
 
   // (Re)cria o processo FFmpeg de uma câmera, reaproveitando o mesmo WebSocket.
   private spawnCameraFfmpeg(state: ActiveStream): void {
     if (state.stopping || !state.camera) return;
+    state.lastDataAt = Date.now(); // dá ao novo processo uma janela cheia antes do watchdog agir
     const camera = state.camera;
     const url =
       state.quality === 'low' && camera.subStreamUrl ? camera.subStreamUrl : camera.streamUrl;
@@ -101,10 +142,25 @@ export class StreamingService {
 
     const ffmpeg = spawn(FFMPEG_PATH, args);
     state.ffmpeg = ffmpeg;
-    ffmpeg.on('error', () => {
-      /* o evento 'close' cuida da reconexão */
+    ffmpeg.on('error', (err: NodeJS.ErrnoException) => {
+      // Falha ao iniciar o processo (ex.: binário não encontrado). Nesse caso o
+      // evento 'close' pode não disparar, então tratamos o erro e reconectamos aqui.
+      console.error(`[streaming] Falha ao iniciar FFmpeg (${FFMPEG_PATH}):`, err);
+      if (state.stopping) return;
+      const msg =
+        err?.code === 'ENOENT'
+          ? 'FFmpeg não encontrado — reinstale o aplicativo.'
+          : 'Falha ao iniciar o vídeo. Reconectando…';
+      this.notifier?.({ cameraId: state.cameraId, status: 'error', error: msg });
+      if (!state.reconnectTimer) {
+        state.reconnectTimer = setTimeout(() => {
+          state.reconnectTimer = undefined;
+          this.spawnCameraFfmpeg(state);
+        }, RECONNECT_DELAY_MS);
+      }
     });
     ffmpeg.stdout?.on('data', (chunk: Buffer) => {
+      state.lastDataAt = Date.now(); // alimenta o watchdog (chegou quadro novo)
       if (!state.gotData) {
         state.gotData = true;
         this.notifier?.({ cameraId: state.cameraId, status: 'running' });
@@ -125,7 +181,10 @@ export class StreamingService {
           ? 'Sem sinal — verifique a URL/credenciais. Tentando reconectar…'
           : 'Conexão perdida. Reconectando…',
       });
-      state.reconnectTimer = setTimeout(() => this.spawnCameraFfmpeg(state), RECONNECT_DELAY_MS);
+      state.reconnectTimer = setTimeout(() => {
+        state.reconnectTimer = undefined; // libera o watchdog após a reconexão
+        this.spawnCameraFfmpeg(state);
+      }, RECONNECT_DELAY_MS);
     });
   }
 
@@ -163,6 +222,7 @@ export class StreamingService {
       gotData: true,
       stopping: false,
       isFile: true,
+      lastDataAt: Date.now(),
     };
     ffmpeg.on('error', () => this.stop(playKey));
     ffmpeg.stdout?.on('data', (chunk: Buffer) => {
@@ -180,6 +240,7 @@ export class StreamingService {
     if (!stream) return;
     stream.stopping = true;
     if (stream.reconnectTimer) clearTimeout(stream.reconnectTimer);
+    if (stream.watchdog) clearInterval(stream.watchdog);
     this.streams.delete(cameraId);
     try {
       stream.ffmpeg?.kill('SIGKILL');

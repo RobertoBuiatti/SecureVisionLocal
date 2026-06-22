@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createRequire } from 'node:module';
-import ffmpegStatic from 'ffmpeg-static';
+import { FFMPEG_PATH } from '../ffmpegPath';
 import type { Camera, DetectionConfig, DetectionEvent, DetectionType } from '../../../src/shared/types';
 
 // Carrega o onnxruntime de forma preguiçosa e tolerante a falhas: se o runtime
@@ -37,7 +37,6 @@ const TRACK_DEADZONE = 0.12; // tolerância antes de mover (objeto considerado c
 const TRACK_GAIN = 0.6; // suavidade do movimento de rastreio
 const TRACK_MAX_SPEED = 0.7;
 
-const FFMPEG_PATH: string = (ffmpegStatic as unknown as string) || 'ffmpeg';
 const FRAME_BYTES = YOLO_INPUT * YOLO_INPUT * 3;
 const OBJ_CONF = 0.4;
 const EVENT_DEBOUNCE_MS = 4000;
@@ -190,7 +189,14 @@ export class AiDetectionService {
     for (const { d, cat } of dets) this.onDetection(state, cat, d.score);
 
     // Acompanhar (PTZ) o objeto mais próximo (maior área), se habilitado.
-    if (state.config.trackEnabled && state.camera.hasPTZ && dets.length > 0) {
+    // Se a câmera já possui rastreamento próprio (firmware), NÃO enviamos comandos
+    // PTZ — senão o software e a câmera brigam pelo controle (tremedeira/oscilação).
+    if (
+      state.config.trackEnabled &&
+      state.camera.hasPTZ &&
+      !state.camera.hasOnboardTracking &&
+      dets.length > 0
+    ) {
       const best = dets.reduce((a, b) => (a.d.w * a.d.h >= b.d.w * b.d.h ? a : b));
       this.track(state, best.d);
     }

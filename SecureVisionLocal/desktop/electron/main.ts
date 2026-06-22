@@ -13,6 +13,7 @@ import { aiDetectionService } from './core/ai/aiDetection';
 import { connectionMonitor } from './core/connectionMonitor';
 import { positionVerifier } from './core/positionVerifier';
 import { localServer } from './server/localServer';
+import { notifyDetection } from './core/alerts';
 
 // Diretórios gerados pelo build (vite-plugin-electron).
 process.env.DIST = join(__dirname, '../dist');
@@ -122,8 +123,14 @@ if (!gotLock) {
     registerIpcHandlers(() => mainWindow);
     // Encaminha o status dos streams (running/erro) para a UI.
     streamingService.setNotifier((e) => mainWindow?.webContents.send(IPC.evtStreamStatus, e));
-    motionDetectionService.setNotifier((ev) => mainWindow?.webContents.send(IPC.evtDetection, ev));
-    aiDetectionService.setNotifier((ev) => mainWindow?.webContents.send(IPC.evtDetection, ev));
+    motionDetectionService.setNotifier((ev) => {
+      mainWindow?.webContents.send(IPC.evtDetection, ev);
+      notifyDetection(ev); // notificação nativa + webhook (respeita as configurações)
+    });
+    aiDetectionService.setNotifier((ev) => {
+      mainWindow?.webContents.send(IPC.evtDetection, ev);
+      notifyDetection(ev);
+    });
     recordingManager.start(); // inicia gravação 24/7 + retenção/reciclagem
     detectionManager.start(); // inicia a detecção de movimento configurada
     tourRunner.resumePersisted(); // retoma rotas PTZ que estavam rodando ao fechar

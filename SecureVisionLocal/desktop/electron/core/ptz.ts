@@ -5,15 +5,55 @@ import * as onvifNs from 'onvif';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const onvif: any = (onvifNs as any).default ?? onvifNs;
 
-// Cache de conexões ONVIF por câmera (a conexão é reutilizada entre comandos).
+// Cache de conexões ONVIF por câmera. Guardamos a PROMISE (não o objeto resolvido) para
+// que comandos simultâneos compartilhem uma única conexão — senão dois cliques rápidos
+// criam duas sessões e a primeira fica órfã (vaza socket/sessão na câmera).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const camConnections = new Map<string, any>();
+const camConnections = new Map<string, Promise<any>>();
+
+// Watchdog de segurança: se o comando de parada se perder (renderer travou, perda de
+// foco), a câmera para sozinha após este tempo em vez de girar indefinidamente. A UI
+// reenvia o comando de movimento periodicamente (keepalive), o que re-arma o watchdog.
+const MOVE_WATCHDOG_MS = 1500;
+const stopTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+function clearWatchdog(cameraId: string): void {
+  const t = stopTimers.get(cameraId);
+  if (t) {
+    clearTimeout(t);
+    stopTimers.delete(cameraId);
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function armWatchdog(cameraId: string, cam: any): void {
+  clearWatchdog(cameraId);
+  stopTimers.set(
+    cameraId,
+    setTimeout(() => {
+      stopTimers.delete(cameraId);
+      try {
+        cam.stop({ panTilt: true, zoom: true });
+      } catch {
+        /* best-effort */
+      }
+    }, MOVE_WATCHDOG_MS),
+  );
+}
+
+// Invalida a conexão (e o watchdog) de uma câmera — use ao editar/remover a câmera, ou
+// quando um comando falha (a sessão cacheada pode ter expirado).
+export function disconnectCamera(cameraId: string): void {
+  camConnections.delete(cameraId);
+  clearWatchdog(cameraId);
+}
 
 function connect(camera: Camera): Promise<unknown> {
   const cached = camConnections.get(camera.id);
-  if (cached) return Promise.resolve(cached);
+  if (cached) return cached;
 
-  return new Promise((resolve, reject) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const p = new Promise<any>((resolve, reject) => {
     try {
       // eslint-disable-next-line no-new
       const cam = new onvif.Cam(
@@ -29,7 +69,6 @@ function connect(camera: Camera): Promise<unknown> {
             reject(err);
             return;
           }
-          camConnections.set(camera.id, cam);
           resolve(cam);
         },
       );
@@ -37,6 +76,11 @@ function connect(camera: Camera): Promise<unknown> {
       reject(err);
     }
   });
+
+  camConnections.set(camera.id, p);
+  // Falhou ao conectar → não deixa uma promise rejeitada cacheada (tenta de novo depois).
+  p.catch(() => camConnections.delete(camera.id));
+  return p;
 }
 
 // Converte a direção em vetor de velocidades (x = pan, y = tilt).
@@ -147,15 +191,19 @@ export async function controlPtz(camera: Camera, cmd: PTZCommand): Promise<boole
         if (!cmd.direction) return false;
         const v = directionToVector(cmd.direction, speed);
         cam.continuousMove({ x: v.x, y: v.y, zoom: 0 });
+        armWatchdog(camera.id, cam); // parada automática se o 'stop' se perder
         return true;
       }
       case 'zoom-in':
         cam.continuousMove({ x: 0, y: 0, zoom: speed / 100 });
+        armWatchdog(camera.id, cam);
         return true;
       case 'zoom-out':
         cam.continuousMove({ x: 0, y: 0, zoom: -speed / 100 });
+        armWatchdog(camera.id, cam);
         return true;
       case 'stop':
+        clearWatchdog(camera.id);
         cam.stop({ panTilt: true, zoom: true });
         return true;
       case 'goto-preset':

@@ -1,10 +1,9 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import ffmpegStatic from 'ffmpeg-static';
+import { FFMPEG_PATH } from './ffmpegPath';
 import type { Camera, DetectionConfig, DetectionEvent } from '../../src/shared/types';
 import { insertDetectionEvent, newEventId } from './detectionRepository';
 import { recordingService } from './recording';
 
-const FFMPEG_PATH: string = (ffmpegStatic as unknown as string) || 'ffmpeg';
 const W = 320;
 const H = 180;
 const FRAME_SIZE = W * H; // 1 byte por pixel (gray)

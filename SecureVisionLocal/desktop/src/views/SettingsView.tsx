@@ -145,6 +145,30 @@ export function SettingsView() {
             onChange={(e) => set('serverPort', Number(e.target.value))}
           />
         </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={draft.notificationsEnabled}
+            onChange={(e) => set('notificationsEnabled', e.target.checked)}
+          />
+          Notificações do Windows ao detectar movimento / pessoa / veículo
+        </label>
+        <label>
+          Webhook de alerta (opcional) — POST a cada detecção
+          <input
+            value={draft.webhookUrl}
+            placeholder="https://exemplo.com/alerta"
+            onChange={(e) => set('webhookUrl', e.target.value)}
+          />
+        </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={draft.overlayDetectionMarks}
+            onChange={(e) => set('overlayDetectionMarks', e.target.checked)}
+          />
+          Marcar detecções no vídeo (traços finos nos clipes por evento — usa mais CPU)
+        </label>
       </div>
 
       <div className="storage-panel">

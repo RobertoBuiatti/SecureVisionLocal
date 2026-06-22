@@ -34,7 +34,7 @@ export function Player({ cameraId, quality = 'low' }: PlayerProps) {
         if (cancelled || !canvasRef.current) return;
         // Stream já estava ativo (mantido entre telas) → conecta direto.
         if (info.status === 'running') setConnecting(false);
-        const url = `ws://127.0.0.1:${info.wsPort}`;
+        const url = `ws://localhost:${info.wsPort}`;
         playerRef.current = new JSMpeg.Player(url, {
           canvas: canvasRef.current,
           audio: false,

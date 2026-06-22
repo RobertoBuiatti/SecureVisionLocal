@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import ffmpegStatic from 'ffmpeg-static';
+import { FFMPEG_PATH } from './ffmpegPath';
 import type { Camera, Recording } from '../../src/shared/types';
 import { getSettings } from './settings';
 import {
@@ -12,7 +12,6 @@ import {
   listRecordingInProgress,
 } from './recordingRepository';
 
-const FFMPEG_PATH: string = (ffmpegStatic as unknown as string) || 'ffmpeg';
 const SEGMENT_PREFIX = 'seg_';
 
 interface ActiveContinuous {

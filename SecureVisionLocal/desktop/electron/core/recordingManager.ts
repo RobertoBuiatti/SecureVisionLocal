@@ -2,6 +2,13 @@ import type { Camera } from '../../src/shared/types';
 import { listCameras } from './cameraRepository';
 import { continuousRecordingService } from './continuousRecording';
 import { enforceRetention } from './retention';
+import { scheduleManager } from './scheduleManager';
+
+// Uma câmera deve gravar continuamente se estiver marcada como 24/7 OU se estiver
+// dentro de uma janela de agendamento ativa neste momento.
+function shouldRecordContinuous(camera: Camera): boolean {
+  return camera.recordContinuous || scheduleManager.isCameraScheduledNow(camera.id);
+}
 
 const TICK_MS = 30_000;
 
@@ -25,9 +32,10 @@ class RecordingManager {
   // Liga/desliga a gravação contínua de uma câmera específica (resposta imediata
   // quando o usuário ativa/desativa "Gravar 24/7").
   applyCamera(camera: Camera): void {
-    if (camera.recordContinuous && !continuousRecordingService.isActive(camera.id)) {
+    const shouldRecord = shouldRecordContinuous(camera);
+    if (shouldRecord && !continuousRecordingService.isActive(camera.id)) {
       continuousRecordingService.start(camera);
-    } else if (!camera.recordContinuous && continuousRecordingService.isActive(camera.id)) {
+    } else if (!shouldRecord && continuousRecordingService.isActive(camera.id)) {
       continuousRecordingService.stop(camera.id);
     }
   }
@@ -46,7 +54,7 @@ class RecordingManager {
   // Câmeras cujo FFmpeg morreu voltam a ser iniciadas aqui (auto-restart).
   private reconcile(): void {
     for (const camera of listCameras()) {
-      if (camera.recordContinuous) {
+      if (shouldRecordContinuous(camera)) {
         if (!continuousRecordingService.isActive(camera.id)) {
           continuousRecordingService.start(camera);
         }

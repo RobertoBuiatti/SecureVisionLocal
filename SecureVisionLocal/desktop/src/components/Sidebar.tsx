@@ -2,6 +2,8 @@ import { useStore, type View } from '../store';
 
 const ITEMS: { view: View; label: string; icon: string }[] = [
   { view: 'live', label: 'Ao Vivo', icon: '◉' },
+  { view: 'dashboard', label: 'Painel', icon: '▦' },
+  { view: 'timeline', label: 'Linha do Tempo', icon: '⏱' },
   { view: 'recordings', label: 'Gravações', icon: '⏺' },
   { view: 'detections', label: 'Detecções', icon: '⚠' },
   { view: 'discovery', label: 'Descobrir', icon: '🔍' },

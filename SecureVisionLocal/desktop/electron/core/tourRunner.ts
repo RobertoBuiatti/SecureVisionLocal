@@ -100,12 +100,17 @@ class TourRunner {
     if (!state || state.stopped) return;
 
     const step = state.tour.steps[state.stepIndex];
+    // Usa os dados atuais da câmera (IP/credenciais podem ter mudado desde o start).
+    const camera = getCamera(cameraId) ?? state.camera;
     // Move para a posição do passo atual (best-effort; erros não param o ciclo).
-    await gotoPresetOnvif(state.camera, step.presetToken);
+    await gotoPresetOnvif(camera, step.presetToken);
 
     if (state.stopped || !this.active.has(cameraId)) return;
 
-    const dwellMs = Math.max(1, step.dwellSeconds) * 1000;
+    // Protege contra dwell inválido (undefined/NaN) que viraria setTimeout(0) e geraria
+    // um loop quente disparando gotoPreset sem parar.
+    const dwell = Number(step.dwellSeconds);
+    const dwellMs = (Number.isFinite(dwell) ? Math.max(1, dwell) : 5) * 1000;
     state.timer = setTimeout(() => {
       const s = this.active.get(cameraId);
       if (!s || s.stopped) return;
