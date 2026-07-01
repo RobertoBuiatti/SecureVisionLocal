@@ -124,6 +124,7 @@ function migrate(database: Database.Database): void {
   addColumnIfMissing(database, 'ptz_presets', 'lastCheckAt', 'INTEGER');
   addColumnIfMissing(database, 'ptz_presets', 'lastCheckOk', 'INTEGER');
   addColumnIfMissing(database, 'ptz_presets', 'lastCheckScore', 'INTEGER');
+  addColumnIfMissing(database, 'recordings', 'detectionType', 'TEXT');
 }
 
 // Adiciona uma coluna se ainda não existir (migração idempotente).

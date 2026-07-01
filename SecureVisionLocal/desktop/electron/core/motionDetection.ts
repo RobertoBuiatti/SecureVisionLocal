@@ -137,7 +137,7 @@ export class MotionDetectionService {
     if (state.config.recordMotion) {
       if (!state.recording && !recordingService.isRecording(state.camera.id)) {
         try {
-          recordingService.start(state.camera, 'motion');
+          recordingService.start(state.camera, 'motion', 'motion');
           state.recording = true;
         } catch {
           /* URL inválida — evento segue registrado, sem gravação */

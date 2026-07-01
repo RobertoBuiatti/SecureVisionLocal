@@ -88,9 +88,11 @@ export function TimelineView() {
               return (
                 <button
                   key={r.id}
-                  className={`tl-block rec ${r.type}`}
+                  className={`tl-block rec ${r.type}${r.detectionType ? ` det-${r.detectionType}` : ''}`}
                   style={{ left: `${left}%`, width: `${Math.max(0.5, end - left)}%` }}
-                  title={`${r.type} • ${new Date(r.startTime).toLocaleTimeString('pt-BR')}`}
+                  title={`${
+                    r.detectionType ? TYPE_LABEL[r.detectionType] ?? r.detectionType : r.type
+                  } • ${new Date(r.startTime).toLocaleTimeString('pt-BR')}`}
                   onClick={() => r.fileSize > 0 && setPlaying(r)}
                 />
               );

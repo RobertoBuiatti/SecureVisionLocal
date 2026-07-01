@@ -13,7 +13,8 @@
     "preview": "vite preview",
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "postinstall": "electron-builder install-app-deps",
-    "lint": "eslint . --ext .ts,.tsx"
+    "lint": "eslint . --ext .ts,.tsx",
+    "test:e2e": "npm run build && node svl-e2e-check.cjs"
   },
   "dependencies": {
     "@cycjimmy/jsmpeg-player": "^6.1.1",
@@ -39,6 +40,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^33.3.1",
     "electron-builder": "^25.1.8",
+    "playwright-core": "^1.61.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "typescript": "^5.7.3",

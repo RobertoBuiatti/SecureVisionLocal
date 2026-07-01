@@ -17,6 +17,12 @@ import { positionVerifier } from './core/positionVerifier';
 import { localServer } from './server/localServer';
 import { notifyDetection } from './core/alerts';
 
+// Diretório de dados alternativo (testes/execução paralela): isola o banco, as
+// thumbnails e a trava de instância única da instalação normal.
+if (process.env.SVL_USER_DATA) {
+  app.setPath('userData', process.env.SVL_USER_DATA);
+}
+
 // Diretórios gerados pelo build (vite-plugin-electron).
 process.env.DIST = join(__dirname, '../dist');
 process.env.VITE_PUBLIC = app.isPackaged ? process.env.DIST : join(__dirname, '../public');

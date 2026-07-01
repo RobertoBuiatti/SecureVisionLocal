@@ -14,6 +14,7 @@ interface RecordingRow {
   filePath: string;
   thumbnailPath: string | null;
   hasMotion: number;
+  detectionType: string | null;
 }
 
 function rowToRecording(r: RecordingRow): Recording {
@@ -22,6 +23,7 @@ function rowToRecording(r: RecordingRow): Recording {
     cameraId: r.cameraId,
     cameraName: r.cameraName ?? undefined,
     type: r.type as Recording['type'],
+    detectionType: (r.detectionType as Recording['detectionType']) ?? undefined,
     status: r.status as Recording['status'],
     startTime: r.startTime,
     endTime: r.endTime,
@@ -37,15 +39,16 @@ export function insertRecording(rec: Recording): void {
   getDb()
     .prepare(
       `INSERT INTO recordings
-        (id, cameraId, cameraName, type, status, startTime, endTime, duration,
+        (id, cameraId, cameraName, type, detectionType, status, startTime, endTime, duration,
          fileSize, filePath, thumbnailPath, hasMotion)
        VALUES
-        (@id, @cameraId, @cameraName, @type, @status, @startTime, @endTime, @duration,
+        (@id, @cameraId, @cameraName, @type, @detectionType, @status, @startTime, @endTime, @duration,
          @fileSize, @filePath, @thumbnailPath, @hasMotion)`,
     )
     .run({
       ...rec,
       cameraName: rec.cameraName ?? null,
+      detectionType: rec.detectionType ?? null,
       endTime: rec.endTime ?? null,
       thumbnailPath: rec.thumbnailPath ?? null,
       hasMotion: rec.hasMotion ? 1 : 0,

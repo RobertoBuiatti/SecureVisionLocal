@@ -1,21 +1,28 @@
-import { useEffect, useRef, useState } from 'react';
-import { useStore } from '../store';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useStore, orderCameras } from '../store';
 import { CameraGrid } from '../components/CameraGrid';
 import { CameraTile } from '../components/CameraTile';
 import { CameraThumb } from '../components/CameraThumb';
 
 type Mode = 'grid' | 'spotlight' | 'fullscreen';
 
-// Layouts da grade, exibidos conforme o número de câmeras.
+// Layouts da grade, exibidos conforme o número de câmeras. Com a paginação da grade,
+// layouts grandes deixaram de ser obrigatórios para ver todas — são uma escolha.
 const LAYOUTS = [
   { value: 1, label: '1x1', min: 1 },
   { value: 4, label: '2x2', min: 2 },
   { value: 9, label: '3x3', min: 5 },
   { value: 16, label: '4x4', min: 10 },
+  { value: 25, label: '5x5', min: 17 },
+  { value: 36, label: '6x6', min: 26 },
+  { value: 64, label: '8x8', min: 37 },
 ];
 
 export function LiveView() {
-  const cameras = useStore((s) => s.cameras);
+  const camerasRaw = useStore((s) => s.cameras);
+  const cameraOrder = useStore((s) => s.cameraOrder);
+  // A mesma ordem da grade vale para o destaque e para a alternância em tela cheia.
+  const cameras = useMemo(() => orderCameras(camerasRaw, cameraOrder), [camerasRaw, cameraOrder]);
   const gridLayout = useStore((s) => s.gridLayout);
   const setGridLayout = useStore((s) => s.setGridLayout);
   const setView = useStore((s) => s.setView);

@@ -22,6 +22,21 @@ function formatDuration(seconds: number): string {
 }
 
 // Lista de gravações armazenadas localmente.
+// Rótulos amigáveis do tipo de gravação e do gatilho de detecção.
+const TYPE_LABEL: Record<string, string> = {
+  manual: 'Manual',
+  continuous: '24/7',
+  motion: 'Movimento',
+  event: 'Evento',
+};
+
+const DETECTION_LABEL: Record<string, { label: string; cls: string }> = {
+  motion: { label: '🏃 Movimento', cls: 'det-motion' },
+  person: { label: '🧍 Pessoa', cls: 'det-person' },
+  vehicle: { label: '🚗 Veículo', cls: 'det-vehicle' },
+  animal: { label: '🐾 Animal', cls: 'det-animal' },
+};
+
 export function RecordingsView() {
   const recordings = useStore((s) => s.recordings);
   const loadRecordings = useStore((s) => s.loadRecordings);
@@ -72,7 +87,15 @@ export function RecordingsView() {
           {recordings.map((rec) => (
             <tr key={rec.id}>
               <td>{rec.cameraName ?? rec.cameraId}</td>
-              <td>{rec.type}</td>
+              <td>
+                {rec.detectionType && DETECTION_LABEL[rec.detectionType] ? (
+                  <span className={`badge ${DETECTION_LABEL[rec.detectionType].cls}`}>
+                    {DETECTION_LABEL[rec.detectionType].label}
+                  </span>
+                ) : (
+                  TYPE_LABEL[rec.type] ?? rec.type
+                )}
+              </td>
               <td>{new Date(rec.startTime).toLocaleString('pt-BR')}</td>
               <td>{formatDuration(rec.duration)}</td>
               <td>{formatBytes(rec.fileSize)}</td>

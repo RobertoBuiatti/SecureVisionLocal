@@ -93,6 +93,7 @@ export interface Recording {
   cameraId: string;
   cameraName?: string;
   type: RecordingType;
+  detectionType?: DetectionType; // o que disparou (pessoa/veículo/animal/movimento)
   status: RecordingStatus;
   startTime: number;
   endTime: number | null;
@@ -133,6 +134,7 @@ export interface AppSettings {
   hardwareAcceleration: 'auto' | 'nvenc' | 'qsv' | 'none';
   startWithWindows: boolean;
   gridLayout: number; // 1, 4, 9, 16...
+  cameraOrder: string[]; // posição das câmeras na grade (ids, arrastar-e-soltar)
   serverEnabled: boolean; // servidor local (app mobile / navegador na LAN)
   serverPort: number;
   serverToken: string; // token de acesso (gerado na 1ª execução)

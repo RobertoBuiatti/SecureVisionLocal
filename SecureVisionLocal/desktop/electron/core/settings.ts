@@ -14,6 +14,7 @@ function defaults(): AppSettings {
     hardwareAcceleration: 'auto',
     startWithWindows: false,
     gridLayout: 4,
+    cameraOrder: [],
     serverEnabled: true,
     serverPort: 8080,
     serverToken: '',

@@ -1,6 +1,18 @@
 import { create } from 'zustand';
 import type { Camera, DiscoveredCamera, Recording, SystemStatus, AppSettings } from './shared/types';
 
+// Ordena as câmeras conforme a disposição escolhida na grade (arrastar-e-soltar).
+// Câmeras fora da lista (recém-adicionadas) entram no final, na ordem de cadastro.
+export function orderCameras(cameras: Camera[], order: string[]): Camera[] {
+  if (!order.length) return cameras;
+  const pos = new Map(order.map((id, i) => [id, i]));
+  return [...cameras].sort((a, b) => {
+    const pa = pos.get(a.id) ?? order.length + a.createdAt;
+    const pb = pos.get(b.id) ?? order.length + b.createdAt;
+    return pa - pb;
+  });
+}
+
 export type View =
   | 'live'
   | 'dashboard'
@@ -19,10 +31,12 @@ interface AppState {
   settings: AppSettings | null;
   isScanning: boolean;
   gridLayout: number;
+  cameraOrder: string[];
   selectedCameraId: string | null;
 
   setView: (view: View) => void;
   setGridLayout: (n: number) => void;
+  swapCameras: (idA: string, idB: string) => Promise<void>;
   selectCamera: (id: string | null) => void;
 
   loadCameras: () => Promise<void>;
@@ -46,6 +60,7 @@ export const useStore = create<AppState>((set, get) => ({
   settings: null,
   isScanning: false,
   gridLayout: 4,
+  cameraOrder: [],
   selectedCameraId: null,
 
   setView: (view) => set({ view }),
@@ -53,6 +68,16 @@ export const useStore = create<AppState>((set, get) => ({
     set({ gridLayout });
     // Persiste o layout escolhido para reabrir o app no mesmo formato.
     void window.svl.settings.update({ gridLayout });
+  },
+  // Troca a posição de duas câmeras na grade (drop de uma sobre a outra) e persiste.
+  swapCameras: async (idA, idB) => {
+    const ids = orderCameras(get().cameras, get().cameraOrder).map((c) => c.id);
+    const ia = ids.indexOf(idA);
+    const ib = ids.indexOf(idB);
+    if (ia < 0 || ib < 0 || ia === ib) return;
+    [ids[ia], ids[ib]] = [ids[ib], ids[ia]];
+    set({ cameraOrder: ids });
+    await window.svl.settings.update({ cameraOrder: ids });
   },
   selectCamera: (selectedCameraId) => set({ selectedCameraId }),
 
@@ -70,7 +95,7 @@ export const useStore = create<AppState>((set, get) => ({
   },
   loadSettings: async () => {
     const settings = await window.svl.settings.get();
-    set({ settings, gridLayout: settings.gridLayout });
+    set({ settings, gridLayout: settings.gridLayout, cameraOrder: settings.cameraOrder ?? [] });
   },
   scan: async () => {
     set({ isScanning: true, discovered: [] });

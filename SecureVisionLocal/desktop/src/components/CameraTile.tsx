@@ -20,14 +20,21 @@ export function CameraTile({ camera }: CameraTileProps) {
   const [showSchedule, setShowSchedule] = useState(false);
   const [busy, setBusy] = useState(false);
   const [snapping, setSnapping] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const toggleContinuous = useStore((s) => s.toggleContinuous);
   const removeCamera = useStore((s) => s.removeCamera);
+
+  // Aviso transitório no bloco (alert() nativo bloqueia o processo do Electron).
+  function showNotice(text: string) {
+    setNotice(text);
+    setTimeout(() => setNotice((n) => (n === text ? null : n)), 6000);
+  }
 
   async function handleSnapshot() {
     setSnapping(true);
     try {
       const res = await window.svl.snapshot.capture(camera.id);
-      if (res.saved) alert(`Snapshot salvo em:\n${res.path}`);
+      if (res.saved) showNotice(`Snapshot salvo em ${res.path}`);
     } finally {
       setSnapping(false);
     }
@@ -112,6 +119,7 @@ export function CameraTile({ camera }: CameraTileProps) {
         </button>
         <span className="tile-ip">{camera.ip}</span>
       </div>
+      {notice && <div className="tile-notice">{notice}</div>}
       {showTour && <PTZTourPanel cameraId={camera.id} onClose={() => setShowTour(false)} />}
       {showEdit && <EditCameraModal camera={camera} onClose={() => setShowEdit(false)} />}
       {showSchedule && <ScheduleModal camera={camera} onClose={() => setShowSchedule(false)} />}

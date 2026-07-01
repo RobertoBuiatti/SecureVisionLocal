@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { FFMPEG_PATH } from './ffmpegPath';
 import { isSafeStreamUrl } from './urlGuard';
-import type { Camera, Recording } from '../../src/shared/types';
+import type { Camera, DetectionType, Recording } from '../../src/shared/types';
 import { getSettings } from './settings';
 import { insertRecording, finalizeRecording } from './recordingRepository';
 import { overlayDetections } from './markRecording';
@@ -22,6 +22,14 @@ function timestampName(prefix: string): string {
   )}${pad(d.getMinutes())}${pad(d.getSeconds())}.mp4`;
 }
 
+// Sufixo do nome de arquivo conforme o gatilho — o clipe exportado já "diz" o que é.
+const DETECTION_FILE_LABEL: Record<DetectionType, string> = {
+  motion: 'movimento',
+  person: 'pessoa',
+  vehicle: 'veiculo',
+  animal: 'animal',
+};
+
 // Gerencia gravações em disco local. Usa `-c copy` (sem reencode) para baixo uso de CPU.
 export class RecordingService {
   private active = new Map<string, ActiveRecording>();
@@ -30,7 +38,11 @@ export class RecordingService {
     return this.active.has(cameraId);
   }
 
-  start(camera: Camera, type: Recording['type'] = 'manual'): Recording {
+  start(
+    camera: Camera,
+    type: Recording['type'] = 'manual',
+    detectionType?: DetectionType,
+  ): Recording {
     const existing = this.active.get(camera.id);
     if (existing) return existing.recording;
     if (!isSafeStreamUrl(camera.streamUrl)) {
@@ -38,7 +50,8 @@ export class RecordingService {
     }
 
     const { recordingsPath } = getSettings();
-    const filename = timestampName(camera.name.replace(/[^\w-]/g, '_'));
+    const label = detectionType ? `_${DETECTION_FILE_LABEL[detectionType]}` : '';
+    const filename = timestampName(`${camera.name.replace(/[^\w-]/g, '_')}${label}`);
     const filePath = join(recordingsPath, filename);
 
     const recording: Recording = {
@@ -46,13 +59,14 @@ export class RecordingService {
       cameraId: camera.id,
       cameraName: camera.name,
       type,
+      detectionType,
       status: 'recording',
       startTime: Date.now(),
       endTime: null,
       duration: 0,
       fileSize: 0,
       filePath,
-      hasMotion: false,
+      hasMotion: detectionType === 'motion',
     };
 
     const args = [
