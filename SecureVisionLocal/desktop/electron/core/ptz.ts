@@ -48,6 +48,11 @@ export function disconnectCamera(cameraId: string): void {
   clearWatchdog(cameraId);
 }
 
+// Conexão ONVIF cacheada da câmera (compartilhada com outros módulos, ex.: resolução).
+export function connectOnvif(camera: Camera): Promise<unknown> {
+  return connect(camera);
+}
+
 function connect(camera: Camera): Promise<unknown> {
   const cached = camConnections.get(camera.id);
   if (cached) return cached;

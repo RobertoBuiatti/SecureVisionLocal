@@ -8,6 +8,7 @@ import {
   captureGrayFrameMedian,
   frameDistance,
   frameDistanceCrop,
+  estimateShift,
   ANALYSIS_SIZE,
 } from './snapshotService';
 import { getSettings } from './settings';
@@ -51,6 +52,45 @@ interface PathStep {
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Direção oposta (fallback para câmeras com pan/tilt espelhado ou montagem invertida).
+const OPPOSITE: Record<PTZDirection, PTZDirection> = {
+  up: 'down',
+  down: 'up',
+  left: 'right',
+  right: 'left',
+  'up-left': 'down-right',
+  'up-right': 'down-left',
+  'down-left': 'up-right',
+  'down-right': 'up-left',
+};
+
+// Converte o deslocamento estimado da imagem em direções PTZ candidatas, em ordem de
+// probabilidade. Convenção de imagem: a referência deslocada para a DIREITA no quadro
+// atual (dx>0) volta ao centro com pan para a DIREITA (pan direito move a cena para a
+// esquerda); referência mais ABAIXO (dy>0) volta com tilt para BAIXO. A direção oposta
+// entra como 2ª candidata (câmeras espelhadas); o eixo secundário completa a lista.
+function directionsFromShift(dx: number, dy: number): PTZDirection[] {
+  const ax = Math.abs(dx);
+  const ay = Math.abs(dy);
+  if (ax < 1 && ay < 1) return ['left', 'right', 'up', 'down']; // sem estimativa útil
+
+  const horiz: PTZDirection = dx > 0 ? 'right' : 'left';
+  const vert: PTZDirection = dy > 0 ? 'down' : 'up';
+
+  let primary: PTZDirection;
+  if (ax >= 2 * ay) primary = horiz; // desvio essencialmente horizontal
+  else if (ay >= 2 * ax) primary = vert; // essencialmente vertical
+  else primary = `${vert}-${horiz}` as PTZDirection; // diagonal (ex.: 'down-right')
+
+  const ordered: PTZDirection[] = [primary, OPPOSITE[primary]];
+  // Completa com os eixos individuais ainda não presentes (máx. 4 tentativas).
+  for (const d of [horiz, vert, OPPOSITE[horiz], OPPOSITE[vert]]) {
+    if (ordered.length >= 4) break;
+    if (!ordered.includes(d)) ordered.push(d);
+  }
+  return ordered;
+}
 
 // Verifica, por IA de imagem, se cada posição salva ainda corresponde à referência
 // capturada quando o ponto foi criado e, se tiver saído do lugar, reposiciona a câmera
@@ -204,18 +244,20 @@ class PositionVerifier {
   }
 
   // Mede, de UMA captura, a distância da imagem INTEIRA e a de um recorte central
-  // (fração `crop`). A imagem inteira valida a reconvergência; o recorte guia o ajuste
-  // fino. Retorna null se a captura falhou (não mover nesse caso).
+  // (fração `crop`), devolvendo também o quadro (usado para estimar o deslocamento).
+  // A imagem inteira valida a reconvergência; o recorte guia o ajuste fino.
+  // Retorna null se a captura falhou (não mover nesse caso).
   private async measureAt(
     url: string,
     ref: Buffer,
     crop: number,
-  ): Promise<{ full: number; crop: number } | null> {
+  ): Promise<{ full: number; crop: number; frame: Buffer } | null> {
     const f = await captureGrayFrameMedian(url, false, MEASURE_SAMPLES);
     if (!f) return null;
     return {
       full: frameDistance(f, ref),
       crop: frameDistanceCrop(f, ref, ANALYSIS_SIZE, crop),
+      frame: f,
     };
   }
 
@@ -231,15 +273,20 @@ class PositionVerifier {
     }
   }
 
-  // Autocorreção MULTI-ESCALA: procura a posição da imagem de referência do grosso ao
-  // fino. A imagem inteira posiciona grosseiramente (acha a região, sem falso encaixe);
-  // recortes centrais cada vez menores afinam a precisão (cada nível parte do resultado
-  // do anterior). Diferenças-chave que a tornam SEGURA (nunca estraga um preset bom):
+  // Autocorreção MULTI-ESCALA guiada por IMAGEM: compara o quadro atual com a foto de
+  // referência capturada QUANDO O PONTO FOI CRIADO e reposiciona a câmera até
+  // reencontrar aquela cena. A estimativa de deslocamento (estimateShift, correlação
+  // de imagem) diz para ONDE a cena fugiu — a busca move direto na direção mais
+  // provável (a oposta cobre montagem espelhada), em vez de tatear as 4 direções.
+  // Recortes centrais cada vez menores afinam a precisão (cada nível parte do
+  // resultado do anterior). Salvaguardas que a tornam SEGURA (nunca estraga um preset):
   //   1. Toda medição usa a MEDIANA de vários quadros (resistente a ruído de cena).
-  //   2. Os passos aceitos ficam só em memória (path); o preset original permanece
+  //   2. Cada movimento só é ACEITO se melhorar a semelhança acima do ruído
+  //      (SEARCH_EPS) — a estimativa sugere, a medição confirma.
+  //   3. Os passos aceitos ficam só em memória (path); o preset original permanece
   //      intacto durante toda a busca — se a busca falhar, a câmera volta para ele.
-  //   3. O preset só é REGRAVADO (uma única vez, no fim) quando a IMAGEM INTEIRA volta a
-  //      bater com a referência (full < THRESHOLD) com ganho real sobre o início.
+  //   4. O preset só é REGRAVADO (uma única vez, no fim) quando a IMAGEM INTEIRA volta
+  //      a bater com a referência (full < THRESHOLD) com ganho real sobre o início.
   // Resultado: ou a posição é genuinamente corrigida, ou nada muda. Nunca um meio-termo.
   private async realign(
     camera: Camera,
@@ -248,7 +295,6 @@ class PositionVerifier {
     url: string,
     baseline: number,
   ): Promise<{ ok: boolean; score: number; corrected: boolean }> {
-    const directions: PTZDirection[] = ['left', 'right', 'up', 'down'];
     const path: PathStep[] = [];
 
     for (const level of SEARCH_LEVELS) {
@@ -256,31 +302,37 @@ class PositionVerifier {
 
       // Posiciona no melhor ponto atual e mede neste nível (recorte) + imagem inteira.
       await this.goToPath(camera, token, path);
-      const start = await this.measureAt(url, ref, level.crop);
-      if (!start) break; // captura falhou → não arrisca mexer
-      if (start.full < THRESHOLD) break; // imagem inteira já bate → não precisa afinar mais
-      let best = start.crop;
+      let atBest = await this.measureAt(url, ref, level.crop);
+      if (!atBest) break; // captura falhou → não arrisca mexer
+      if (atBest.full < THRESHOLD) break; // imagem inteira já bate → não precisa afinar mais
 
       for (let iter = 0; iter < SEARCH_MAX_ITER; iter++) {
-        if (this.aborted) break;
+        if (this.aborted || !atBest) break;
 
-        let bestDir: PTZDirection | null = null;
-        let bestDirScore = best;
-        for (const d of directions) {
+        // Estima para onde a cena se deslocou e ordena as direções candidatas.
+        const shift = estimateShift(atBest.frame, ref);
+        const candidates = shift
+          ? directionsFromShift(shift.dx, shift.dy)
+          : (['left', 'right', 'up', 'down'] as PTZDirection[]);
+
+        // Aceita a PRIMEIRA candidata que melhora de verdade (menos movimentos que
+        // testar todas); nenhuma melhora → passa ao próximo nível (mais fino).
+        let accepted = false;
+        for (const d of candidates) {
           if (this.aborted) break;
           await this.goToPath(camera, token, path); // parte sempre do melhor ponto atual
           await this.moveBurst(camera, d, level.ms);
           await sleep(SEARCH_SETTLE_MS);
           const m = await this.measureAt(url, ref, level.crop);
           // Só conta como ganho se superar o ruído (SEARCH_EPS). null = captura falhou.
-          if (m && m.crop < bestDirScore - SEARCH_EPS) {
-            bestDirScore = m.crop;
-            bestDir = d;
+          if (m && m.crop < atBest.crop - SEARCH_EPS) {
+            path.push({ dir: d, ms: level.ms });
+            atBest = m; // a câmera já está neste ponto (goToPath + burst = path)
+            accepted = true;
+            break;
           }
         }
-        if (!bestDir) break; // nenhuma direção melhora de verdade → próximo nível (mais fino)
-        path.push({ dir: bestDir, ms: level.ms });
-        best = bestDirScore;
+        if (!accepted) break;
       }
     }
 

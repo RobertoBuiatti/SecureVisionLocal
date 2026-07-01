@@ -16,6 +16,8 @@ import {
 } from '../core/cameraRepository';
 import { discover } from '../core/discovery';
 import { probeOnvifDevice } from '../core/onvifInfo';
+import { getVideoEncoderInfo, setVideoResolution } from '../core/videoEncoder';
+import type { VideoResolution } from '../../src/shared/types';
 import { streamingService } from '../core/streaming';
 import { recordingService } from '../core/recording';
 import { continuousRecordingService } from '../core/continuousRecording';
@@ -46,6 +48,7 @@ import { readFile, copyFile } from 'node:fs/promises';
 import { listSchedules, upsertSchedule, deleteSchedule } from '../core/scheduleRepository';
 import { testConnection } from '../core/connection';
 import { getSettings, updateSettings } from '../core/settings';
+import { applyStartWithWindows } from '../core/autostart';
 import { getSystemStatus } from '../core/system';
 import { recordingManager } from '../core/recordingManager';
 import { getStorageUsage, enforceRetention } from '../core/retention';
@@ -93,6 +96,24 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
       status: result.success ? 'online' : 'offline',
     });
     return result;
+  });
+
+  // ---- Resolução do encoder (ONVIF) ----
+  ipcMain.handle(IPC.camerasVideoOptions, async (_e, id: string) => {
+    const camera = getCamera(id);
+    if (!camera) return { supported: false, current: null, resolutions: [] };
+    return getVideoEncoderInfo(camera);
+  });
+  ipcMain.handle(IPC.camerasSetResolution, async (_e, id: string, resolution: VideoResolution) => {
+    const camera = getCamera(id);
+    if (!camera) return false;
+    const ok = await setVideoResolution(camera, resolution);
+    if (ok) {
+      // A câmera reinicia o stream ao aplicar; derruba o pipeline atual para
+      // reconectar já na nova resolução.
+      streamingService.stop(id);
+    }
+    return ok;
   });
 
   // ---- Descoberta ----
@@ -262,6 +283,10 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     // Reinicia o servidor se a ativação/porta mudou.
     if ('serverEnabled' in updates || 'serverPort' in updates) {
       localServer.applySettings();
+    }
+    // Sincroniza o registro de inicialização do Windows.
+    if ('startWithWindows' in updates) {
+      applyStartWithWindows();
     }
     return updated;
   });

@@ -143,6 +143,88 @@ export function frameDistance(a: Buffer, b: Buffer): number {
   return (1 - zncc) * 50; // 0 (idêntico) .. 100 (oposto)
 }
 
+// ZNCC entre duas janelas sobrepostas dos quadros (usada pela estimativa de
+// deslocamento). Percorre com passo 2 para reduzir custo sem perder robustez.
+function overlapZncc(
+  cur: Buffer,
+  ref: Buffer,
+  side: number,
+  dx: number,
+  dy: number,
+): number | null {
+  const x0 = Math.max(0, dx);
+  const y0 = Math.max(0, dy);
+  const x1 = Math.min(side, side + dx);
+  const y1 = Math.min(side, side + dy);
+  const w = x1 - x0;
+  const h = y1 - y0;
+  if (w < side / 3 || h < side / 3) return null; // sobreposição pequena demais → não confiável
+
+  let ma = 0;
+  let mb = 0;
+  let n = 0;
+  for (let y = y0; y < y1; y += 2) {
+    for (let x = x0; x < x1; x += 2) {
+      ma += cur[y * side + x];
+      mb += ref[(y - dy) * side + (x - dx)];
+      n++;
+    }
+  }
+  if (n === 0) return null;
+  ma /= n;
+  mb /= n;
+  let num = 0;
+  let da = 0;
+  let db = 0;
+  for (let y = y0; y < y1; y += 2) {
+    for (let x = x0; x < x1; x += 2) {
+      const xa = cur[y * side + x] - ma;
+      const xb = ref[(y - dy) * side + (x - dx)] - mb;
+      num += xa * xb;
+      da += xa * xa;
+      db += xb * xb;
+    }
+  }
+  if (da === 0 || db === 0) return null;
+  return num / Math.sqrt(da * db);
+}
+
+export interface ShiftEstimate {
+  dx: number; // deslocamento horizontal (px na grade de análise); >0 = referência à direita no quadro atual
+  dy: number; // deslocamento vertical; >0 = referência mais abaixo no quadro atual
+  confidence: number; // ZNCC no melhor alinhamento (0..1); baixo = estimativa duvidosa
+}
+
+// Estima o DESLOCAMENTO (dx, dy) entre o quadro atual e a referência do preset por
+// busca de correlação (template matching): testa alinhamentos grossos (passo 4) numa
+// janela de ±40% da imagem e refina o melhor com passo 1. Isto dá à autocorreção a
+// DIREÇÃO e a ORDEM de grandeza do desvio de uma só vez, em vez de descobrir por
+// tentativa e erro movendo a câmera em todas as direções.
+export function estimateShift(cur: Buffer, ref: Buffer, side = ANALYSIS_SIZE): ShiftEstimate | null {
+  const range = Math.round(side * 0.4);
+  let best = { dx: 0, dy: 0, score: -2 };
+
+  for (let dy = -range; dy <= range; dy += 4) {
+    for (let dx = -range; dx <= range; dx += 4) {
+      const s = overlapZncc(cur, ref, side, dx, dy);
+      if (s !== null && s > best.score) best = { dx, dy, score: s };
+    }
+  }
+  if (best.score <= -2) return null;
+
+  // Refinamento fino (passo 1) ao redor do melhor alinhamento grosso.
+  const coarse = { ...best };
+  for (let dy = coarse.dy - 3; dy <= coarse.dy + 3; dy++) {
+    for (let dx = coarse.dx - 3; dx <= coarse.dx + 3; dx++) {
+      if (dx === coarse.dx && dy === coarse.dy) continue;
+      const s = overlapZncc(cur, ref, side, dx, dy);
+      if (s !== null && s > best.score) best = { dx, dy, score: s };
+    }
+  }
+
+  return { dx: best.dx, dy: best.dy, confidence: Math.max(0, best.score) };
+}
+
 function run(args: string[]): Promise<boolean> {
   return new Promise((resolve) => {
     const ff = spawn(FFMPEG_PATH, args, { stdio: 'ignore' });

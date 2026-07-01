@@ -49,6 +49,19 @@ export interface CreateCameraDTO {
   recordContinuous?: boolean;
 }
 
+// ---- Resolução do encoder (ONVIF) ----
+
+export interface VideoResolution {
+  width: number;
+  height: number;
+}
+
+export interface VideoEncoderInfo {
+  supported: boolean; // a câmera respondeu com resoluções disponíveis
+  current: VideoResolution | null; // resolução atual do stream principal
+  resolutions: VideoResolution[]; // resoluções aceitas (maior → menor)
+}
+
 // Dados obtidos via ONVIF (com credenciais): identificação + URLs de stream reais.
 export interface OnvifProbeResult {
   manufacturer?: string;

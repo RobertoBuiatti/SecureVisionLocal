@@ -22,6 +22,8 @@ import type {
   PositionCheckResult,
   ConnectionTestResult,
   RecordingSchedule,
+  VideoEncoderInfo,
+  VideoResolution,
 } from './types';
 
 // Nomes dos canais IPC (domínio:ação).
@@ -31,6 +33,8 @@ export const IPC = {
   camerasUpdate: 'cameras:update',
   camerasRemove: 'cameras:remove',
   camerasTest: 'cameras:test',
+  camerasVideoOptions: 'cameras:video-options',
+  camerasSetResolution: 'cameras:set-resolution',
   discoveryScan: 'discovery:scan',
   onvifProbe: 'onvif:probe',
   streamStart: 'stream:start',
@@ -85,6 +89,8 @@ export interface SvlApi {
     update: (id: string, updates: Partial<Camera>) => Promise<Camera | null>;
     remove: (id: string) => Promise<boolean>;
     test: (id: string) => Promise<ConnectionTestResult>;
+    videoOptions: (id: string) => Promise<VideoEncoderInfo>;
+    setResolution: (id: string, resolution: VideoResolution) => Promise<boolean>;
   };
   discovery: {
     scan: (opts?: { timeoutMs?: number; subnet?: string }) => Promise<DiscoveredCamera[]>;
