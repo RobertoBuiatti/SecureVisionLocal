@@ -13,6 +13,7 @@ export function SettingsView() {
   const [draft, setDraft] = useState<AppSettings | null>(settings);
   const [usage, setUsage] = useState<StorageUsage | null>(null);
   const [recycling, setRecycling] = useState(false);
+  const [recycleMsg, setRecycleMsg] = useState<string | null>(null);
   const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null);
 
   useEffect(() => {
@@ -27,10 +28,11 @@ export function SettingsView() {
 
   async function runRetention() {
     setRecycling(true);
+    setRecycleMsg(null);
     try {
       const removed = await window.svl.system.runRetention();
       setUsage(await window.svl.system.storageUsage());
-      alert(`Reciclagem concluída. ${removed} gravação(ões) antiga(s) removida(s).`);
+      setRecycleMsg(`Reciclagem concluída. ${removed} gravação(ões) antiga(s) removida(s).`);
     } finally {
       setRecycling(false);
     }
@@ -200,6 +202,7 @@ export function SettingsView() {
         <button className="btn" onClick={runRetention} disabled={recycling}>
           {recycling ? 'Reciclando…' : 'Liberar espaço agora (reciclar antigas)'}
         </button>
+        {recycleMsg && <p className="muted">{recycleMsg}</p>}
       </div>
 
       <div className="storage-panel">

@@ -278,8 +278,12 @@ export class AiDetectionService {
 
     if (this.shouldRecord(state.config, type)) {
       if (!state.recording && !recordingService.isRecording(state.camera.id)) {
-        recordingService.start(state.camera, 'event');
-        state.recording = true;
+        try {
+          recordingService.start(state.camera, 'event');
+          state.recording = true;
+        } catch {
+          /* URL inválida — evento segue registrado, sem gravação */
+        }
       }
       if (state.recordStopTimer) clearTimeout(state.recordStopTimer);
       state.recordStopTimer = setTimeout(() => {

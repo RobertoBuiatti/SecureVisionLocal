@@ -49,22 +49,26 @@ class DetectionManager {
     }
   }
 
+  // Câmeras OFFLINE não são (re)iniciadas — evita respawn de FFmpeg em loop contra
+  // uma câmera inacessível. Ao voltar, o monitor de conexão a marca online e o
+  // próximo ciclo religa a detecção.
   private reconcile(): void {
     for (const camera of listCameras()) {
       const config = getDetectionConfig(camera.id);
-      if (config.motionEnabled) {
+      const reachable = camera.status !== 'offline';
+      if (config.motionEnabled && reachable) {
         if (!motionDetectionService.isActive(camera.id)) {
           motionDetectionService.start(camera, config);
         }
-      } else if (motionDetectionService.isActive(camera.id)) {
+      } else if (!config.motionEnabled && motionDetectionService.isActive(camera.id)) {
         motionDetectionService.stop(camera.id);
       }
 
-      if (config.aiEnabled) {
+      if (config.aiEnabled && reachable) {
         if (!aiDetectionService.isActive(camera.id)) {
           aiDetectionService.start(camera, config);
         }
-      } else if (aiDetectionService.isActive(camera.id)) {
+      } else if (!config.aiEnabled && aiDetectionService.isActive(camera.id)) {
         aiDetectionService.stop(camera.id);
       }
     }

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { getDb } from './db';
+import { encryptSecret, decryptSecret, isEncrypted } from './secrets';
 import type { Camera, CreateCameraDTO, CameraType } from '../../src/shared/types';
 
 // Linha do SQLite (inteiros para booleanos) → objeto de domínio.
@@ -27,6 +28,8 @@ interface CameraRow {
   updatedAt: number;
 }
 
+// Campos sensíveis são descriptografados na leitura (safeStorage/DPAPI). As URLs de
+// stream também, pois costumam embutir usuário:senha (padrão RTSP).
 function rowToCamera(r: CameraRow): Camera {
   return {
     id: r.id,
@@ -37,9 +40,9 @@ function rowToCamera(r: CameraRow): Camera {
     type: r.type as CameraType,
     manufacturer: r.manufacturer ?? undefined,
     username: r.username ?? undefined,
-    password: r.password ?? undefined,
-    streamUrl: r.streamUrl,
-    subStreamUrl: r.subStreamUrl ?? undefined,
+    password: decryptSecret(r.password) ?? undefined,
+    streamUrl: decryptSecret(r.streamUrl) ?? r.streamUrl,
+    subStreamUrl: decryptSecret(r.subStreamUrl) ?? undefined,
     onvifProfile: r.onvifProfile ?? undefined,
     onvifPort: r.onvifPort ?? undefined,
     status: r.status as Camera['status'],
@@ -103,8 +106,9 @@ export function addCamera(dto: CreateCameraDTO): Camera {
       ...camera,
       manufacturer: camera.manufacturer ?? null,
       username: camera.username ?? null,
-      password: camera.password ?? null,
-      subStreamUrl: camera.subStreamUrl ?? null,
+      password: encryptSecret(camera.password ?? null),
+      streamUrl: encryptSecret(camera.streamUrl) ?? camera.streamUrl,
+      subStreamUrl: encryptSecret(camera.subStreamUrl ?? null),
       onvifProfile: camera.onvifProfile ?? null,
       onvifPort: camera.onvifPort ?? null,
       hasPTZ: camera.hasPTZ ? 1 : 0,
@@ -136,8 +140,9 @@ export function updateCamera(id: string, updates: Partial<Camera>): Camera | nul
       ...merged,
       manufacturer: merged.manufacturer ?? null,
       username: merged.username ?? null,
-      password: merged.password ?? null,
-      subStreamUrl: merged.subStreamUrl ?? null,
+      password: encryptSecret(merged.password ?? null),
+      streamUrl: encryptSecret(merged.streamUrl) ?? merged.streamUrl,
+      subStreamUrl: encryptSecret(merged.subStreamUrl ?? null),
       onvifProfile: merged.onvifProfile ?? null,
       onvifPort: merged.onvifPort ?? null,
       hasPTZ: merged.hasPTZ ? 1 : 0,
@@ -152,4 +157,28 @@ export function updateCamera(id: string, updates: Partial<Camera>): Camera | nul
 export function removeCamera(id: string): boolean {
   const info = getDb().prepare('DELETE FROM cameras WHERE id = ?').run(id);
   return info.changes > 0;
+}
+
+// Migração única na inicialização: cifra senhas/URLs que ainda estejam em texto puro
+// no banco (registros criados antes da criptografia em repouso existir).
+export function migrateCameraSecrets(): void {
+  const rows = getDb()
+    .prepare('SELECT id, password, streamUrl, subStreamUrl FROM cameras')
+    .all() as Pick<CameraRow, 'id' | 'password' | 'streamUrl' | 'subStreamUrl'>[];
+  const update = getDb().prepare(
+    'UPDATE cameras SET password=@password, streamUrl=@streamUrl, subStreamUrl=@subStreamUrl WHERE id=@id',
+  );
+  for (const row of rows) {
+    const needs =
+      (row.password && !isEncrypted(row.password)) ||
+      (row.streamUrl && !isEncrypted(row.streamUrl)) ||
+      (row.subStreamUrl && !isEncrypted(row.subStreamUrl));
+    if (!needs) continue;
+    update.run({
+      id: row.id,
+      password: encryptSecret(row.password),
+      streamUrl: encryptSecret(row.streamUrl) ?? row.streamUrl,
+      subStreamUrl: encryptSecret(row.subStreamUrl),
+    });
+  }
 }

@@ -1,6 +1,8 @@
 import { get } from 'node:https';
+import { createHash } from 'node:crypto';
 import {
   createWriteStream,
+  createReadStream,
   existsSync,
   statSync,
   mkdirSync,
@@ -15,13 +17,28 @@ export type ModelKey = 'object';
 
 // URL padrão (baixada na 1ª ativação). Caso não esteja acessível na rede, o
 // usuário pode colocar o arquivo manualmente na pasta de modelos.
-const MODELS: Record<ModelKey, { file: string; url: string }> = {
+// O sha256 protege contra corrupção e troca do arquivo na origem (supply chain):
+// um download cujo hash não bata com o esperado é descartado.
+const MODELS: Record<ModelKey, { file: string; url: string; sha256: string }> = {
   object: {
     file: 'yolov8n.onnx',
     // Fonte pública (GitHub raw) — YOLOv8n COCO, saída [1,84,8400] verificada.
     url: 'https://raw.githubusercontent.com/Hyuto/yolov8-onnxruntime-web/master/public/model/yolov8n.onnx',
+    // Hash do mesmo arquivo embutido no instalador (resources/models/yolov8n.onnx).
+    sha256: '505648ada344cd9f3f31e51d49c489c070819bc96cc758258a8fd51488e00579',
   },
 };
+
+// Calcula o SHA-256 de um arquivo em stream (sem carregar 12 MB na memória).
+function fileSha256(path: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('sha256');
+    const stream = createReadStream(path);
+    stream.on('error', reject);
+    stream.on('data', (c) => hash.update(c));
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
+}
 
 export function modelsDir(): string {
   const dir = join(getDataDir(), 'models');
@@ -73,7 +90,18 @@ export async function ensureModel(key: ModelKey): Promise<boolean> {
   if (downloading.has(key)) return false;
   downloading.add(key);
   try {
-    await downloadFile(MODELS[key].url, userModelPath(key));
+    const dest = userModelPath(key);
+    await downloadFile(MODELS[key].url, dest);
+    // Verificação de integridade: hash diferente do esperado → descarta o download.
+    const hash = await fileSha256(dest);
+    if (hash !== MODELS[key].sha256) {
+      try {
+        unlinkSync(dest);
+      } catch {
+        /* noop */
+      }
+      return false;
+    }
     return isModelReady(key);
   } catch {
     return false;

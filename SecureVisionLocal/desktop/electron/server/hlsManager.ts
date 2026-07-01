@@ -2,6 +2,8 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { FFMPEG_PATH } from '../core/ffmpegPath';
+import { hwaccelArgs } from '../core/hwaccel';
+import { isSafeStreamUrl } from '../core/urlGuard';
 import type { Camera } from '../../src/shared/types';
 import { getDataDir } from '../core/paths';
 
@@ -54,8 +56,11 @@ export class HlsManager {
     }
     mkdirSync(dir, { recursive: true });
 
+    if (!isSafeStreamUrl(camera.streamUrl)) return dir; // URL inválida → sem sessão
+
     const playlist = join(dir, 'index.m3u8');
     const args = [
+      ...hwaccelArgs(),
       '-rtsp_transport', 'tcp',
       '-i', camera.streamUrl,
       '-an',

@@ -136,8 +136,12 @@ export class MotionDetectionService {
     // Gravação por movimento (se habilitada): inicia e renova o timer de parada.
     if (state.config.recordMotion) {
       if (!state.recording && !recordingService.isRecording(state.camera.id)) {
-        recordingService.start(state.camera, 'motion');
-        state.recording = true;
+        try {
+          recordingService.start(state.camera, 'motion');
+          state.recording = true;
+        } catch {
+          /* URL inválida — evento segue registrado, sem gravação */
+        }
       }
       if (state.recordStopTimer) clearTimeout(state.recordStopTimer);
       state.recordStopTimer = setTimeout(() => {

@@ -1,7 +1,7 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createReadStream, existsSync, statSync, readFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash, timingSafeEqual } from 'node:crypto';
 import { app } from 'electron';
 import type { Camera, PTZCommand, ServerInfo } from '../../src/shared/types';
 import { listCameras, getCamera } from '../core/cameraRepository';
@@ -20,11 +20,52 @@ const CONTENT_TYPES: Record<string, string> = {
   '.json': 'application/json',
 };
 
-// Remove a senha da câmera antes de enviar pela rede.
+// Oculta credenciais embutidas numa URL RTSP (rtsp://user:senha@host → rtsp://host).
+function redactUrl(url: string | undefined): string | undefined {
+  if (!url) return url;
+  return url.replace(/^((?:rtsp|rtsps|http|https|rtmp):\/\/)[^@/]+@/i, '$1');
+}
+
+// Remove a senha e as credenciais embutidas nas URLs antes de enviar pela rede.
+// O cliente (app mobile) consome o vídeo via HLS deste servidor, não via RTSP direto.
 function publicCamera(cam: Camera) {
   const { password, ...rest } = cam;
   void password;
-  return rest;
+  return {
+    ...rest,
+    streamUrl: redactUrl(rest.streamUrl) ?? rest.streamUrl,
+    subStreamUrl: redactUrl(rest.subStreamUrl),
+  };
+}
+
+// Comparação de token em tempo constante (via hash, para aceitar tamanhos diferentes).
+function tokenMatches(provided: string | null, expected: string): boolean {
+  if (!provided || !expected) return false;
+  const a = createHash('sha256').update(provided).digest();
+  const b = createHash('sha256').update(expected).digest();
+  return timingSafeEqual(a, b);
+}
+
+// Valida o corpo do comando PTZ recebido pela rede (não confia no cast do JSON).
+function parsePtzCommand(body: unknown): PTZCommand | null {
+  if (!body || typeof body !== 'object') return null;
+  const cmd = body as Record<string, unknown>;
+  const actions = ['move', 'stop', 'zoom-in', 'zoom-out', 'goto-preset'];
+  const directions = [
+    'up', 'down', 'left', 'right', 'up-left', 'up-right', 'down-left', 'down-right',
+  ];
+  if (typeof cmd.action !== 'string' || !actions.includes(cmd.action)) return null;
+  if (cmd.direction !== undefined && (typeof cmd.direction !== 'string' || !directions.includes(cmd.direction))) {
+    return null;
+  }
+  if (cmd.speed !== undefined && typeof cmd.speed !== 'number') return null;
+  if (cmd.presetToken !== undefined && typeof cmd.presetToken !== 'string') return null;
+  return {
+    action: cmd.action as PTZCommand['action'],
+    direction: cmd.direction as PTZCommand['direction'],
+    speed: typeof cmd.speed === 'number' ? Math.max(0, Math.min(100, cmd.speed)) : undefined,
+    presetToken: cmd.presetToken as string | undefined,
+  };
 }
 
 function getOrCreateToken(): string {
@@ -100,7 +141,7 @@ export class LocalServer {
     // Autenticação por token (header Bearer ou ?token= para players de mídia).
     const auth = req.headers.authorization?.replace('Bearer ', '');
     const provided = auth || url.searchParams.get('token');
-    if (provided !== token) {
+    if (!tokenMatches(provided, token)) {
       return this.json(res, 401, { error: 'Token inválido ou ausente' });
     }
 
@@ -138,8 +179,9 @@ export class LocalServer {
 
       if (method === 'GET' && sub === '') return this.json(res, 200, publicCamera(camera));
       if (method === 'POST' && sub === '/ptz') {
-        const body = (await this.readJson(req)) as PTZCommand;
-        const ok = await controlPtz(camera, body);
+        const cmd = parsePtzCommand(await this.readJson(req));
+        if (!cmd) return this.json(res, 400, { error: 'Comando PTZ inválido' });
+        const ok = await controlPtz(camera, cmd);
         return this.json(res, 200, { ok });
       }
       if (method === 'POST' && sub === '/recording/start') {

@@ -3,6 +3,7 @@ import { mkdirSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { FFMPEG_PATH } from './ffmpegPath';
+import { isSafeStreamUrl } from './urlGuard';
 import type { Camera, Recording } from '../../src/shared/types';
 import { getSettings } from './settings';
 import {
@@ -45,6 +46,7 @@ export class ContinuousRecordingService {
 
   start(camera: Camera): void {
     if (this.active.has(camera.id)) return;
+    if (!isSafeStreamUrl(camera.streamUrl)) return;
 
     const dir = cameraDir(camera.id);
     const segmentSeconds = Math.max(1, getSettings().continuousSegmentMinutes) * 60;
@@ -53,6 +55,9 @@ export class ContinuousRecordingService {
     const args = [
       '-rtsp_transport', 'tcp',
       '-i', camera.streamUrl,
+      // Áudio opcional ("0:a?"): câmera sem áudio grava só o vídeo, sem erro.
+      '-map', '0:v:0',
+      '-map', '0:a?',
       '-c:v', 'copy', // vídeo sem reencode
       '-c:a', 'aac', // áudio p/ AAC (MP4 não aceita pcm_alaw com copy)
       '-f', 'segment',

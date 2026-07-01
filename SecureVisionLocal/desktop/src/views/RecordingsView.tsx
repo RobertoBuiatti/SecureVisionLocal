@@ -26,6 +26,7 @@ export function RecordingsView() {
   const recordings = useStore((s) => s.recordings);
   const loadRecordings = useStore((s) => s.loadRecordings);
   const [playing, setPlaying] = useState<Recording | null>(null);
+  const [exportMsg, setExportMsg] = useState<string | null>(null);
 
   useEffect(() => {
     loadRecordings();
@@ -38,7 +39,8 @@ export function RecordingsView() {
 
   async function exportRec(id: string) {
     const res = await window.svl.recording.export(id);
-    if (res.saved) alert(`Gravação exportada para:\n${res.path}`);
+    // alert() nativo bloqueia o processo — mensagem inline no lugar.
+    if (res.saved) setExportMsg(`Gravação exportada para: ${res.path}`);
   }
 
   return (
@@ -52,6 +54,7 @@ export function RecordingsView() {
           Atualizar
         </button>
       </div>
+      {exportMsg && <p className="muted">{exportMsg}</p>}
 
       <table className="table">
         <thead>

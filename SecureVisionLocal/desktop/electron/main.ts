@@ -2,6 +2,8 @@ import { app, BrowserWindow, Tray, Menu, nativeImage } from 'electron';
 import { join } from 'node:path';
 import { registerIpcHandlers } from './ipc/handlers';
 import { getDb, closeDb } from './core/db';
+import { migrateCameraSecrets } from './core/cameraRepository';
+import { applyStartWithWindows } from './core/autostart';
 import { streamingService } from './core/streaming';
 import { IPC } from '../src/shared/ipc';
 import { recordingService } from './core/recording';
@@ -41,6 +43,7 @@ function createWindow(): void {
     minHeight: 640,
     backgroundColor: '#0f1115',
     title: 'SecureVision Local',
+    icon: appIcon(),
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -81,8 +84,17 @@ function createWindow(): void {
   });
 }
 
+// Ícone do app (32x32, PNG embutido — evita depender de arquivo externo no asar).
+const APP_ICON_B64 =
+  'iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAADLUlEQVR42tWXz0vbYBjHPYf9AW/SJjnsJtt/0MvYj1tOW2vVtvFX1WrbDbyMsTEKO4ngVHbYZTssh10GY7RF55wUnYiIoq44pXOuayldxm5DhcAznhJtk75valsPFj4Q3vd5vt9v3qTJm7a2y/QTo0VGjBYlMVqMidGiIkaLCR1FH8M5pvXGkYJLjBQUMVLQxEgBbND0WlfTxkI4zwnhvCKE89Ag2Ms1aJ6ThHBOFcI5aBLUkM5nPpqVhdEstBi5PvORQ0kYOYQLovZK8KEDjg8dqHzoAOy48ywH8otCCTyup0fXtr4n+OGMwg9nwIrrYz9gOvkXsn9O4N+xZgDHcA5rammgB918aN/FD+2DFfJMnmpMC4K1tbTQqzrA4J7CD+4BDXnml62xGeyx0kMvg7kzuMs4g7uaM7gLZq492Iesajzz7W9ZGIu9ght3H5XAYxwzrIR6UuqlaepeTEWAtOQMpoHGdOK3QfjNuxRcuXrPwOu3n+BjahOSnzcMtdhrpYue5QADOzHnwA7QyKrHhjM3m99//BJOfxiiciWw10oXPcsB+rcUZ/8WmLn9dM9wRrjU5gDe4fGzALgSWFPZgxo0bfQ8C+Do20w4+jbBTOD5d4MYXm9zgNMQuBJ4jDWVPahB00bPcoDejYSjdwPMBCYzdQWopCrAZAZo2uhZDtCzrjh61sHMrSdp20tgxnwJUIOmjZ7lAPJazCGvAQ27m9CM+Sa00kXPswCcvCpx8irQmPqQs/0bnoJzlbXYa6WLnuUAgRWGC6xoXGAFzLSHcBWOGngQHZV6aZq6l3HrxvmXFc6/DDT8E+lzP4qxx0oPvareBZxvycX5lsAK/8TXqpWgvozUo1JtLS30or4R2e6UwnanwIr2oS8w9f4nNQiO4RzW1NJAD8v9ANu1yLFdiyrbtQh23Hy4Br7x7RJ4XE+Prl17k8p2Lkhs5wJcEPVtTlnvvMx656HFyOfaGRPvnES8cyrxzkGToIbU0LcB6ZjlSMesQjpmoUGwl2v6C4l4ki7iSSrEk9SIJwk2aHqtq+XfiMQdZ4g7LhF3PEbccYW44wkdRR/DOeZSfXH/B/mBH5VMa3nHAAAAAElFTkSuQmCC';
+
+export function appIcon(): Electron.NativeImage {
+  return nativeImage.createFromDataURL(`data:image/png;base64,${APP_ICON_B64}`);
+}
+
 function createTray(): void {
-  const icon = nativeImage.createEmpty();
+  // Antes o ícone era createEmpty() → a bandeja ficava invisível no Windows.
+  const icon = appIcon().resize({ width: 16, height: 16 });
   tray = new Tray(icon);
   tray.setToolTip('SecureVision Local');
   const menu = Menu.buildFromTemplate([
@@ -105,6 +117,26 @@ function createTray(): void {
   tray.on('double-click', () => mainWindow?.show());
 }
 
+// Auto-update: verifica em segundo plano quando empacotado. Se o servidor de releases
+// (electron-builder.yml → publish.url) não estiver configurado/acessível, falha em
+// silêncio e o app segue normalmente.
+function setupAutoUpdate(): void {
+  if (!app.isPackaged) return;
+  import('electron-updater')
+    .then(({ autoUpdater }) => {
+      autoUpdater.autoDownload = true;
+      autoUpdater.on('error', () => {
+        /* provider não configurado/sem rede — ignora */
+      });
+      void autoUpdater.checkForUpdatesAndNotify().catch(() => {
+        /* ignora */
+      });
+    })
+    .catch(() => {
+      /* módulo indisponível — ignora */
+    });
+}
+
 // Instância única (evita múltiplas gravações simultâneas do mesmo sistema).
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -120,6 +152,8 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     getDb(); // inicializa/migra o banco
+    migrateCameraSecrets(); // cifra senhas/URLs legadas em texto puro (safeStorage)
+    applyStartWithWindows(); // sincroniza o registro de inicialização com a configuração
     registerIpcHandlers(() => mainWindow);
     // Encaminha o status dos streams (running/erro) para a UI.
     streamingService.setNotifier((e) => mainWindow?.webContents.send(IPC.evtStreamStatus, e));
@@ -139,6 +173,7 @@ if (!gotLock) {
     localServer.start(); // servidor REST + HLS (app mobile / navegador na LAN)
     createWindow();
     createTray();
+    setupAutoUpdate();
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();

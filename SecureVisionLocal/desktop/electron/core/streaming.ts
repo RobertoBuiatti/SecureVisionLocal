@@ -1,9 +1,16 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { WebSocketServer } from 'ws';
 import { FFMPEG_PATH } from './ffmpegPath';
+import { hwaccelArgs } from './hwaccel';
+import { isSafeStreamUrl } from './urlGuard';
 import type { Camera, StreamInfo } from '../../src/shared/types';
 
 const RECONNECT_DELAY_MS = 3000;
+// Faixa de portas dos WebSockets de vídeo. Bind SOMENTE em loopback: o consumidor é o
+// jsmpeg do próprio renderer (ws://localhost). Expor na LAN vazaria o vídeo sem token.
+const WS_HOST = '127.0.0.1';
+const WS_PORT_MIN = 9100;
+const WS_PORT_MAX = 9400;
 const STALL_TIMEOUT_MS = 8000; // sem novos quadros por mais que isto = travado → reinicia
 const WATCHDOG_INTERVAL_MS = 3000; // frequência de checagem do travamento
 
@@ -55,12 +62,7 @@ export class StreamingService {
       };
     }
 
-    const wsPort = this.allocatePort();
-    const wss = new WebSocketServer({ port: wsPort, perMessageDeflate: false });
-    await new Promise<void>((resolve) => {
-      wss.once('listening', () => resolve());
-      wss.once('error', () => resolve());
-    });
+    const { wss, wsPort } = await this.listenOnFreePort();
 
     const state: ActiveStream = {
       cameraId: camera.id,
@@ -121,10 +123,19 @@ export class StreamingService {
     const camera = state.camera;
     const url =
       state.quality === 'low' && camera.subStreamUrl ? camera.subStreamUrl : camera.streamUrl;
+    if (!isSafeStreamUrl(url)) {
+      this.notifier?.({
+        cameraId: state.cameraId,
+        status: 'error',
+        error: 'URL de stream inválida — edite a câmera.',
+      });
+      return;
+    }
     const scale = state.quality === 'high' ? '1280:-1' : '640:-1';
     const bitrate = state.quality === 'high' ? '2500k' : '1000k';
 
     const args = [
+      ...hwaccelArgs(),
       '-rtsp_transport', 'tcp',
       '-fflags', 'nobuffer',
       '-flags', 'low_delay',
@@ -193,14 +204,10 @@ export class StreamingService {
     const existing = this.streams.get(playKey);
     if (existing) return { cameraId: playKey, wsPort: existing.wsPort, status: 'running' };
 
-    const wsPort = this.allocatePort();
-    const wss = new WebSocketServer({ port: wsPort, perMessageDeflate: false });
-    await new Promise<void>((resolve) => {
-      wss.once('listening', () => resolve());
-      wss.once('error', () => resolve());
-    });
+    const { wss, wsPort } = await this.listenOnFreePort();
 
     const args = [
+      ...hwaccelArgs(),
       '-re',
       '-i', filePath,
       '-f', 'mpegts',
@@ -259,11 +266,39 @@ export class StreamingService {
     for (const id of Array.from(this.streams.keys())) this.stop(id);
   }
 
-  private allocatePort(): number {
-    const port = this.nextPort;
-    this.nextPort += 1;
-    if (this.nextPort > 9400) this.nextPort = 9100;
-    return port;
+  // Abre um WebSocketServer numa porta livre da faixa (testando de verdade o bind).
+  // Antes as portas eram incrementadas às cegas e erros de "porta ocupada" eram
+  // engolidos — o stream falhava em silêncio. Aqui, porta ocupada → tenta a próxima.
+  private async listenOnFreePort(): Promise<{ wss: WebSocketServer; wsPort: number }> {
+    const range = WS_PORT_MAX - WS_PORT_MIN + 1;
+    let lastError: Error = new Error('sem portas livres');
+    for (let attempt = 0; attempt < range; attempt++) {
+      const wsPort = this.nextPort;
+      this.nextPort = this.nextPort >= WS_PORT_MAX ? WS_PORT_MIN : this.nextPort + 1;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        const wss = await new Promise<WebSocketServer>((resolve, reject) => {
+          const server = new WebSocketServer({
+            host: WS_HOST,
+            port: wsPort,
+            perMessageDeflate: false,
+          });
+          server.once('listening', () => resolve(server));
+          server.once('error', (err) => {
+            try {
+              server.close();
+            } catch {
+              /* noop */
+            }
+            reject(err);
+          });
+        });
+        return { wss, wsPort };
+      } catch (err) {
+        lastError = err as Error;
+      }
+    }
+    throw lastError;
   }
 }
 

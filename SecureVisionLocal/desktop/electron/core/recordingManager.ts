@@ -52,13 +52,16 @@ class RecordingManager {
 
   // Garante que o conjunto em gravação corresponde às câmeras marcadas como 24/7.
   // Câmeras cujo FFmpeg morreu voltam a ser iniciadas aqui (auto-restart).
+  // Câmeras OFFLINE (segundo o monitor de conexão) não são reiniciadas — evita
+  // respawn de FFmpeg em loop contra uma câmera inacessível (desperdício de CPU).
+  // Quando a câmera volta, o monitor a marca online e o próximo ciclo religa tudo.
   private reconcile(): void {
     for (const camera of listCameras()) {
-      if (shouldRecordContinuous(camera)) {
+      if (shouldRecordContinuous(camera) && camera.status !== 'offline') {
         if (!continuousRecordingService.isActive(camera.id)) {
           continuousRecordingService.start(camera);
         }
-      } else if (continuousRecordingService.isActive(camera.id)) {
+      } else if (!shouldRecordContinuous(camera) && continuousRecordingService.isActive(camera.id)) {
         continuousRecordingService.stop(camera.id);
       }
     }

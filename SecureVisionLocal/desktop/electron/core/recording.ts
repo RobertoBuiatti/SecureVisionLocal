@@ -3,6 +3,7 @@ import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { FFMPEG_PATH } from './ffmpegPath';
+import { isSafeStreamUrl } from './urlGuard';
 import type { Camera, Recording } from '../../src/shared/types';
 import { getSettings } from './settings';
 import { insertRecording, finalizeRecording } from './recordingRepository';
@@ -32,6 +33,9 @@ export class RecordingService {
   start(camera: Camera, type: Recording['type'] = 'manual'): Recording {
     const existing = this.active.get(camera.id);
     if (existing) return existing.recording;
+    if (!isSafeStreamUrl(camera.streamUrl)) {
+      throw new Error('URL de stream inválida — edite a câmera.');
+    }
 
     const { recordingsPath } = getSettings();
     const filename = timestampName(camera.name.replace(/[^\w-]/g, '_'));
@@ -54,6 +58,10 @@ export class RecordingService {
     const args = [
       '-rtsp_transport', 'tcp',
       '-i', camera.streamUrl,
+      // Mapeamento explícito com áudio OPCIONAL ("0:a?"): câmeras sem faixa de áudio
+      // não derrubam mais o FFmpeg — ele grava só o vídeo.
+      '-map', '0:v:0',
+      '-map', '0:a?',
       '-c:v', 'copy', // copia o vídeo (sem reencode) — baixo uso de CPU
       '-c:a', 'aac', // converte o áudio (ex.: pcm_alaw da Xiongmai) p/ AAC compatível com MP4
       '-movflags', '+frag_keyframe+empty_moov',
