@@ -33,11 +33,13 @@ interface AppState {
   gridLayout: number;
   cameraOrder: string[];
   selectedCameraId: string | null;
+  sidebarOpen: boolean;
 
   setView: (view: View) => void;
   setGridLayout: (n: number) => void;
   swapCameras: (idA: string, idB: string) => Promise<void>;
   selectCamera: (id: string | null) => void;
+  setSidebarOpen: (open: boolean) => void;
 
   loadCameras: () => Promise<void>;
   loadRecordings: () => Promise<void>;
@@ -62,8 +64,10 @@ export const useStore = create<AppState>((set, get) => ({
   gridLayout: 4,
   cameraOrder: [],
   selectedCameraId: null,
+  sidebarOpen: true,
 
-  setView: (view) => set({ view }),
+  setView: (view) => set({ view, sidebarOpen: false }),
+  setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
   setGridLayout: (gridLayout) => {
     set({ gridLayout });
     // Persiste o layout escolhido para reabrir o app no mesmo formato.

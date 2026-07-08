@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { getReferenceMarks } from './referenceMarksRepository';
 import { captureGrayFrame, captureGrayFrameMedian, ANALYSIS_SIZE, frameDistance } from './snapshotService';
 import { presetsSnapshotDir } from './snapshotService';
-import { controlPtz } from './ptz';
+import { controlPtz, continuousMoveVector } from './ptz';
 import type { Camera, ReferenceMark } from '../../src/shared/types';
 
 const SEARCH_RANGE = 24;
@@ -151,30 +151,32 @@ export async function verifyWithReferences(camera: Camera, presetId: string): Pr
 
 // Aplica movimento PTZ corretivo baseado no deslocamento calculado.
 // Converte deslocamento em pixels (grade 128) para movimento PTZ proporcional.
+// Move diagonalmente (x/y simultâneos) em vez de sequencial, com duração proporcional
+// ao deslocamento.
 export async function fineTune(camera: Camera, dx: number, dy: number): Promise<boolean> {
   if (dx === 0 && dy === 0) return false;
   if (!camera.hasPTZ) return false;
 
-  const speed = Math.min(25, Math.max(5, Math.round(Math.sqrt(dx * dx + dy * dy) * 1.5)));
+  const magnitude = Math.sqrt(dx * dx + dy * dy);
+  const speed = Math.min(25, Math.max(5, Math.round(magnitude * 1.5)));
+  const duration = Math.max(100, Math.min(600, Math.round(magnitude * 20)));
 
-  if (dx > 0) {
-    await controlPtz(camera, { action: 'move', direction: 'right', speed });
-  } else if (dx < 0) {
-    await controlPtz(camera, { action: 'move', direction: 'left', speed });
-  }
+  // Move diagonalmente: x/y simultâneos, mais preciso que X→Y sequencial
+  // ONVIF: +x = direita, +y = cima → dy precisa ser invertido (imagem: +y = baixo)
+  const normX = dx / magnitude;
+  const normY = dy / magnitude;
+  const x = clamp((normX * speed) / 100, -1, 1);
+  const y = clamp((-normY * speed) / 100, -1, 1);
 
-  await sleep(300);
-
-  if (dy > 0) {
-    await controlPtz(camera, { action: 'move', direction: 'down', speed });
-  } else if (dy < 0) {
-    await controlPtz(camera, { action: 'move', direction: 'up', speed });
-  }
-
-  await sleep(300);
+  await continuousMoveVector(camera, x, y);
+  await sleep(duration);
   await controlPtz(camera, { action: 'stop' });
 
   return true;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
 // --- Funções auxiliares ---

@@ -15,6 +15,7 @@ export function App() {
   const loadSettings = useStore((s) => s.loadSettings);
   const loadStatus = useStore((s) => s.loadStatus);
   const setCameraStatus = useStore((s) => s.setCameraStatus);
+  const setSidebarOpen = useStore((s) => s.setSidebarOpen);
 
   useEffect(() => {
     loadCameras();
@@ -36,6 +37,9 @@ export function App() {
     <div className="app">
       <Sidebar />
       <main className="content">
+        <button className="sidebar-toggle" onClick={() => setSidebarOpen(true)} title="Abrir sidebar">
+          ☰
+        </button>
         {view === 'live' && <LiveView />}
         {view === 'dashboard' && <DashboardView />}
         {view === 'timeline' && <TimelineView />}

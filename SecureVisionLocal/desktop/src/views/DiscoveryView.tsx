@@ -37,7 +37,7 @@ export function DiscoveryView() {
 
       {isScanning && <div className="scanning">🔍 Varrendo a rede local…</div>}
 
-      <table className="table">
+      <div className="table-wrapper"><table className="table">
         <thead>
           <tr>
             <th>IP</th>
@@ -71,7 +71,7 @@ export function DiscoveryView() {
             </tr>
           )}
         </tbody>
-      </table>
+      </table></div>
 
       {showModal && <AddCameraModal prefill={selected} onClose={() => setShowModal(false)} />}
     </div>

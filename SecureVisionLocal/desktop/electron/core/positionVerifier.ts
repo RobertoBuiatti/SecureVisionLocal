@@ -19,9 +19,9 @@ import { tourRunner } from './tourRunner';
 // Distância (0..100, menor = mais parecido) acima disso = posição provavelmente errada.
 // Usa correlação normalizada (frameDistance), robusta a brilho — por isso o limiar é baixo.
 const THRESHOLD = 12;
-// Só tenta autocorrigir quando está CLARAMENTE deslocada (não em pequenas variações de
-// luz/cena), evitando ficar "caçando" ruído e mexendo a câmera à toa.
-const REALIGN_TRIGGER = 22;
+// A autocorreção tenta qualquer posição com score >= THRESHOLD. As salvaguardas
+// internas (SEARCH_EPS, MIN_GAIN, validação final pela imagem inteira) evitam que
+// pequenas variações de luz/cena ou ruído provoquem correções desnecessárias.
 const SETTLE_MS = 4000; // tempo para a câmera estabilizar após mover
 const MEASURE_SAMPLES = 3; // quadros por medição (mediana) — resistência a ruído
 
@@ -193,30 +193,67 @@ class PositionVerifier {
         let ok = score < THRESHOLD;
         let corrected = false;
 
-        // Só corrige se estiver CLARAMENTE deslocada (drift real), não em pequenas
-        // diferenças de luz/cena. A câmera já está no preset (gotoPreset acima).
-        if (!ok && score >= REALIGN_TRIGGER && !this.aborted) {
-          const realign = await this.realign(camera, preset.token, ref, url, score);
-          ok = realign.ok;
-          corrected = realign.corrected;
-          score = realign.score;
-        }
+        // --- ETAPA 1: Correção com marcas de referência (desvios moderados) ---
+        // Para scores entre THRESHOLD e MODERATE_SCORE, tenta primeiro o ajuste fino
+        // por template matching das marcas (mais preciso que a busca global para
+        // pequenos desvios). Se não houver marcas ou não funcionar, cai na Etapa 2.
+        const MODERATE_SCORE = 25;
+        let marksFineTuned = false;
 
-        // Refinamento fino com marcas de referência (se o preset tiver marcas salvas).
-        // Usa pontos de alto contraste (linhas/zonas) para corrigir desvios residuais
-        // que o ZNCC global pode não capturar devido a mudanças na cena.
-        if (ok && !this.aborted) {
+        if (!ok && score >= THRESHOLD && score < MODERATE_SCORE && !this.aborted) {
           const marks = getReferenceMarks(preset.id);
           if (marks.length > 0) {
             const refResult = await verifyWithReferences(camera, preset.id);
             if (refResult.adjusted && refResult.confidence > 0.5) {
               await fineTune(camera, refResult.dx, refResult.dy);
               await sleep(SETTLE_MS);
+              const recheck = await captureGrayFrameMedian(url, false, MEASURE_SAMPLES);
+              if (recheck) {
+                const newScore = frameDistance(recheck, ref);
+                if (newScore < THRESHOLD) {
+                  score = newScore;
+                  ok = true;
+                  corrected = true;
+                  marksFineTuned = true;
+                  await updatePresetOnvif(camera, preset.token);
+                } else if (newScore < score) {
+                  // Melhorou mas não o suficiente — atualiza o baseline para a Etapa 2
+                  score = newScore;
+                }
+              }
+            }
+          }
+        }
+
+        // --- ETAPA 2: Realinhamento global (busca visual multi-escala) ---
+        // Só executa se ainda não está OK (marcas não resolveram ou desvio era grande).
+        if (!ok && score >= THRESHOLD && !this.aborted) {
+          const realign = await this.realign(camera, preset.token, ref, url, score);
+          ok = realign.ok;
+          corrected = corrected || realign.corrected;
+          score = realign.score;
+        }
+
+        // --- ETAPA 3: Refinamento fino com marcas de referência ---
+        // Se o preset tem marcas e ainda não rodaram (ou rolaram na Etapa 1 só como
+        // correção, mas o realinhamento global pode ter mudado a cena), tenta finar.
+        if (ok && !this.aborted) {
+          const marks = getReferenceMarks(preset.id);
+          if (marks.length > 0 && !marksFineTuned) {
+            const refResult = await verifyWithReferences(camera, preset.id);
+            if (refResult.adjusted && refResult.confidence > 0.5) {
+              await fineTune(camera, refResult.dx, refResult.dy);
+              await sleep(SETTLE_MS);
               const finalCur = await captureGrayFrameMedian(url, false, MEASURE_SAMPLES);
               if (finalCur) {
-                score = frameDistance(finalCur, ref);
-                ok = score < THRESHOLD;
-                corrected = true;
+                const newScore = frameDistance(finalCur, ref);
+                // Se a segunda passada melhorou ainda mais, persiste
+                if (newScore <= score) {
+                  score = newScore;
+                  ok = newScore < THRESHOLD;
+                  corrected = true;
+                  await updatePresetOnvif(camera, preset.token);
+                }
               }
             }
           }

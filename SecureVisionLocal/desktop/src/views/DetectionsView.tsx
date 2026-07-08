@@ -209,7 +209,7 @@ export function DetectionsView() {
       </div>
 
       <h3 style={{ marginTop: 24 }}>Eventos recentes</h3>
-      <table className="table">
+      <div className="table-wrapper"><table className="table">
         <thead>
           <tr>
             <th>Hora</th>
@@ -240,7 +240,7 @@ export function DetectionsView() {
             </tr>
           )}
         </tbody>
-      </table>
+      </table></div>
     </div>
   );
 }

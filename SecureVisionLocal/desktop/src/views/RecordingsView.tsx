@@ -71,7 +71,7 @@ export function RecordingsView() {
       </div>
       {exportMsg && <p className="muted">{exportMsg}</p>}
 
-      <table className="table">
+      <div className="table-wrapper"><table className="table">
         <thead>
           <tr>
             <th>Câmera</th>
@@ -132,7 +132,7 @@ export function RecordingsView() {
             </tr>
           )}
         </tbody>
-      </table>
+      </table></div>
 
       {playing && <RecordingPlayerModal recording={playing} onClose={() => setPlaying(null)} />}
     </div>

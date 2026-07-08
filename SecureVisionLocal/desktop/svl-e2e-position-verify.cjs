@@ -164,9 +164,9 @@ function randomId() { return 'test_' + Math.random().toString(36).slice(2, 10); 
   ok(!!(await page.$('.tour-modal .preset-item')), 'presets na UI do modal Rota');
   await page.screenshot({ path: shots('pv1-tour-modal.png') });
 
-  // Verificar botões: Ir, + rota, Marcas, Editar, ✕
+  // Verificar botões: Ir, + rota, Marcas, Editar, Salvar posição, ✕
   const presetBtns = await page.$$('.tour-modal .preset-item:first-child .preset-btns button');
-  ok(presetBtns.length === 5, `5 botões por preset (Ir, + rota, Marcas, Editar, ✕) — tem ${presetBtns.length}`);
+  ok(presetBtns.length === 6, `6 botões por preset (Ir, + rota, Marcas, Editar, Salvar posição, ✕) — tem ${presetBtns.length}`);
 
   // Clicar em Editar no primeiro preset
   const editBtn = await page.$('.tour-modal .preset-item:first-child .preset-btns button:nth-child(4)');
@@ -187,6 +187,14 @@ function randomId() { return 'test_' + Math.random().toString(36).slice(2, 10); 
     await page.click('.tour-modal .preset-edit .btn:has-text("Cancelar")');
     await page.waitForTimeout(200);
     ok(!(await page.$('.tour-modal .preset-edit')), 'edição cancelada');
+  }
+
+  // Verificar botão Salvar posição
+  const salvarPosBtn = await page.$('.tour-modal .preset-item:first-child .preset-btns button:nth-child(5)');
+  ok(!!salvarPosBtn, 'botão Salvar posição');
+  if (salvarPosBtn) {
+    const salvarText = await salvarPosBtn.textContent();
+    ok(salvarText.trim() === 'Salvar posição', `texto: "${salvarText.trim()}"`);
   }
 
   await page.screenshot({ path: shots('pv2-edit-preset.png') });
