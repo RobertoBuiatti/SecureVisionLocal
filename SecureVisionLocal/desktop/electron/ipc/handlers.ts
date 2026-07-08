@@ -65,6 +65,7 @@ import {
 import { detectFeatures } from '../core/referenceVerifier';
 import {
   listSnapshots,
+  getSnapshotById,
   deleteSnapshot,
 } from '../core/detectionSnapshotRepository';
 
@@ -328,6 +329,16 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   ipcMain.handle(IPC.detectionListSnapshots, (_e, cameraId: string) =>
     listSnapshots(cameraId),
   );
+  ipcMain.handle(IPC.detectionGetSnapshotFile, async (_e, id: string) => {
+    const snap = getSnapshotById(id);
+    if (!snap) return null;
+    try {
+      const buf = await readFile(snap.filePath);
+      return `data:image/jpeg;base64,${buf.toString('base64')}`;
+    } catch {
+      return null;
+    }
+  });
   ipcMain.handle(IPC.detectionDeleteSnapshot, (_e, id: string) => {
     deleteSnapshot(id);
     return true;

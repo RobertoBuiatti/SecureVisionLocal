@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { unlink } from 'node:fs/promises';
 import { getDb } from './db';
 import type { DetectionSnapshot } from '../../src/shared/types';
 
@@ -57,23 +58,28 @@ export function countSnapshotsByCamera(cameraId: string): number {
 }
 
 export function deleteOldestSnapshot(cameraId: string): void {
-  getDb()
-    .prepare(
-      `DELETE FROM detection_snapshots
-       WHERE id = (
-         SELECT id FROM detection_snapshots
-         WHERE cameraId = ?
-         ORDER BY timestamp ASC
-         LIMIT 1
-       )`,
-    )
-    .run(cameraId);
+  const oldest = getDb()
+    .prepare('SELECT id, filePath FROM detection_snapshots WHERE cameraId = ? ORDER BY timestamp ASC LIMIT 1')
+    .get(cameraId) as { id: string; filePath: string } | undefined;
+  if (!oldest) return;
+  getDb().prepare('DELETE FROM detection_snapshots WHERE id = ?').run(oldest.id);
+  unlink(oldest.filePath).catch(() => {});
+}
+
+export function getSnapshotById(id: string): DetectionSnapshot | null {
+  const row = getDb().prepare('SELECT * FROM detection_snapshots WHERE id = ?').get(id) as SnapRow | undefined;
+  if (!row) return null;
+  return rowToSnap(row);
 }
 
 export function deleteSnapshot(id: string): void {
+  const row = getDb().prepare('SELECT filePath FROM detection_snapshots WHERE id = ?').get(id) as { filePath: string } | undefined;
   getDb().prepare('DELETE FROM detection_snapshots WHERE id = ?').run(id);
+  if (row) unlink(row.filePath).catch(() => {});
 }
 
 export function deleteSnapshotsByCamera(cameraId: string): void {
+  const rows = getDb().prepare('SELECT filePath FROM detection_snapshots WHERE cameraId = ?').all(cameraId) as { filePath: string }[];
   getDb().prepare('DELETE FROM detection_snapshots WHERE cameraId = ?').run(cameraId);
+  for (const r of rows) unlink(r.filePath).catch(() => {});
 }

@@ -78,6 +78,7 @@ export const IPC = {
   detectionListEvents: 'detection:list-events',
   detectionAiStatus: 'detection:ai-status',
   detectionListSnapshots: 'detection:list-snapshots',
+  detectionGetSnapshotFile: 'detection:get-snapshot-file',
   detectionDeleteSnapshot: 'detection:delete-snapshot',
   systemStatus: 'system:status',
   storageUsage: 'storage:usage',
@@ -165,7 +166,8 @@ export interface SvlApi {
     listEvents: () => Promise<DetectionEvent[]>;
     onEvent: (cb: (ev: DetectionEvent) => void) => () => void;
     aiStatus: () => Promise<AiStatus>;
-    listSnapshots: (cameraId: string) => Promise<DetectionSnapshot[]>;
+    listSnapshots: (cameraId?: string) => Promise<DetectionSnapshot[]>;
+    getSnapshotFile: (id: string) => Promise<string | null>;
     deleteSnapshot: (id: string) => Promise<boolean>;
   };
   system: {

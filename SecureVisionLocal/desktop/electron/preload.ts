@@ -83,6 +83,7 @@ const api: SvlApi = {
     },
     aiStatus: () => ipcRenderer.invoke(IPC.detectionAiStatus),
     listSnapshots: (cameraId) => ipcRenderer.invoke(IPC.detectionListSnapshots, cameraId),
+    getSnapshotFile: (id) => ipcRenderer.invoke(IPC.detectionGetSnapshotFile, id),
     deleteSnapshot: (id) => ipcRenderer.invoke(IPC.detectionDeleteSnapshot, id),
   },
   system: {

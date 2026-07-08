@@ -94,6 +94,21 @@ html,
   overflow: auto;
   padding: 20px 24px;
 }
+.live-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.live-view .view-header {
+  flex-shrink: 0;
+}
+.live-view .grid {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+  grid-auto-rows: 1fr;
+}
 .view-header {
   display: flex;
   justify-content: space-between;
@@ -239,10 +254,20 @@ html,
   gap: 12px;
 }
 
-/* Grid */
+/* Grid — preenche a área disponível sem estourar a viewport */
 .grid {
   display: grid;
   gap: 12px;
+  height: 100%;
+  min-height: 0;
+}
+
+/* Em modo grid, o vídeo preenche o espaço disponível (como no spotlight/fullscreen),
+   em vez de ficar preso ao aspect-ratio 16:9 baseado na largura. */
+.grid .tile-video {
+  aspect-ratio: auto;
+  flex: 1;
+  min-height: 0;
 }
 /* Célula da grade: arrastável para reorganizar as câmeras (troca de posição). */
 .grid-cell {
@@ -623,7 +648,6 @@ html,
   background: var(--bg-3);
   border: 1px solid var(--border);
   border-radius: 8px;
-  overflow: hidden;
 }
 .preset-thumb {
   position: relative;
@@ -666,6 +690,7 @@ html,
 }
 .preset-btns {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   padding: 0 6px 6px;
 }
@@ -1462,9 +1487,6 @@ html,
     max-height: 200px;
   }
 
-  .preset-btns {
-    flex-wrap: wrap;
-  }
   .preset-btns button {
     font-size: 10px;
   }
@@ -1473,6 +1495,98 @@ html,
     flex-wrap: wrap;
     gap: 8px;
   }
+}
+
+/* Snapshots View */
+.snap-filters {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.snap-filters select {
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 9px 10px;
+  border-radius: 8px;
+  font-size: 14px;
+  min-width: 200px;
+}
+.snap-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+.snap-card {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.snap-img {
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--bg-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.snap-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.2s;
+}
+.snap-img:hover img {
+  transform: scale(1.05);
+}
+.snap-placeholder {
+  color: var(--muted);
+  font-size: 13px;
+}
+.snap-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.snap-info .btn.small {
+  margin-left: auto;
+  padding: 4px 8px;
+  font-size: 11px;
+}
+.snap-zoom {
+  position: relative;
+  width: auto;
+  max-width: 90vw;
+  max-height: 90vh;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.snap-zoom img {
+  max-width: 100%;
+  max-height: 85vh;
+  border-radius: 6px;
+  object-fit: contain;
+}
+.modal-close {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 20px;
+  cursor: pointer;
+  z-index: 1;
 }
 
 /* Telas ≤ 480px: muito compacto */

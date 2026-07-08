@@ -18,6 +18,7 @@ export type View =
   | 'dashboard'
   | 'timeline'
   | 'recordings'
+  | 'snapshots'
   | 'detections'
   | 'discovery'
   | 'settings';

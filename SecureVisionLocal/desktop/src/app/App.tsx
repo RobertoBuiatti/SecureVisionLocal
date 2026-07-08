@@ -6,6 +6,7 @@ import { DashboardView } from '../views/DashboardView';
 import { TimelineView } from '../views/TimelineView';
 import { DiscoveryView } from '../views/DiscoveryView';
 import { RecordingsView } from '../views/RecordingsView';
+import { SnapshotsView } from '../views/SnapshotsView';
 import { DetectionsView } from '../views/DetectionsView';
 import { SettingsView } from '../views/SettingsView';
 
@@ -45,6 +46,7 @@ export function App() {
         {view === 'timeline' && <TimelineView />}
         {view === 'discovery' && <DiscoveryView />}
         {view === 'recordings' && <RecordingsView />}
+        {view === 'snapshots' && <SnapshotsView />}
         {view === 'detections' && <DetectionsView />}
         {view === 'settings' && <SettingsView />}
       </main>

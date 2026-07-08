@@ -37,6 +37,8 @@ interface SuggestedFeature {
 
 // Detecta feições (features) de alto contraste na imagem de referência de um preset
 // e sugere pontos de referência automáticos.
+// A estratégia busca as bordas (pontas) e o centro da imagem — regiões com maior
+// riqueza visual para servir como marcas de alinhamento — em vez de varrer em grade.
 export async function detectFeatures(presetId: string): Promise<SuggestedFeature[]> {
   const refPath = join(presetsSnapshotDir(), `${presetId}.jpg`);
   const gray = await loadRefGray(refPath);
@@ -45,44 +47,62 @@ export async function detectFeatures(presetId: string): Promise<SuggestedFeature
   const side = ANALYSIS_SIZE;
   const grad = computeGradientMagnitude(gray, side);
 
-  const features: SuggestedFeature[] = [];
-  const step = 16;
-  const windowSize = 12;
+  // Divide a imagem em 5 regiões estratégicas: 4 cantos + centro.
+  // Cada região busca o ponto de maior gradiente (borda mais forte) dentro dela.
+  const regions: { name: string; x1: number; y1: number; x2: number; y2: number }[] = [
+    { name: 'top-left',     x1: 0,          y1: 0,          x2: side / 2, y2: side / 2 },
+    { name: 'top-right',    x1: side / 2,   y1: 0,          x2: side,     y2: side / 2 },
+    { name: 'bottom-left',  x1: 0,          y1: side / 2,   x2: side / 2, y2: side },
+    { name: 'bottom-right', x1: side / 2,   y1: side / 2,   x2: side,     y2: side },
+    { name: 'center',       x1: side * 0.25, y1: side * 0.25, x2: side * 0.75, y2: side * 0.75 },
+  ];
 
-  for (let y = windowSize; y + windowSize < side; y += step) {
-    for (let x = windowSize; x + windowSize < side; x += step) {
-      let sumGrad = 0;
-      let count = 0;
-      for (let ky = -windowSize; ky <= windowSize; ky++) {
-        for (let kx = -windowSize; kx <= windowSize; kx++) {
-          sumGrad += grad[(y + ky) * side + (x + kx)];
-          count++;
+  // Margem de segurança: evita que o ponto fique colado na borda da região vizinha.
+  const MARGIN = 4;
+  const candidates: { gx: number; gy: number; score: number }[] = [];
+
+  for (const reg of regions) {
+    let bestX = 0;
+    let bestY = 0;
+    let bestScore = -1;
+    for (let y = reg.y1 + MARGIN; y < reg.y2 - MARGIN; y++) {
+      for (let x = reg.x1 + MARGIN; x < reg.x2 - MARGIN; x++) {
+        const g = grad[y * side + x];
+        if (g > bestScore) {
+          bestScore = g;
+          bestX = x;
+          bestY = y;
         }
       }
-      const avgGrad = count > 0 ? sumGrad / count : 0;
-
-      if (avgGrad > FEATURE_MIN_VARIANCE) {
-        const cx = Math.max(0, Math.min(1, x / side));
-        const cy = Math.max(0, Math.min(1, y / side));
-        const size = 0.06;
-
-        features.push({
-          type: 'zone',
-          points: [
-            { x: cx - size, y: cy - size },
-            { x: cx + size, y: cy - size },
-            { x: cx + size, y: cy + size },
-            { x: cx - size, y: cy + size },
-          ],
-          expectedDistanceLeft: Math.round(x * 100) / 100,
-          expectedDistanceTop: Math.round(y * 100) / 100,
-          tolerance: 10,
-        });
-      }
+    }
+    if (bestScore > 0) {
+      candidates.push({ gx: bestX, gy: bestY, score: bestScore });
     }
   }
 
-  return features.slice(0, 8);
+  // Ordena por força do gradiente (decrescente) e limita a 6 marcas.
+  candidates.sort((a, b) => b.score - a.score);
+  const top = candidates.slice(0, 6);
+
+  const features: SuggestedFeature[] = top.map((c) => {
+    const cx = Math.max(0, Math.min(1, c.gx / side));
+    const cy = Math.max(0, Math.min(1, c.gy / side));
+    const size = 0.06;
+    return {
+      type: 'zone',
+      points: [
+        { x: cx - size, y: cy - size },
+        { x: cx + size, y: cy - size },
+        { x: cx + size, y: cy + size },
+        { x: cx - size, y: cy + size },
+      ],
+      expectedDistanceLeft: Math.round(c.gx),
+      expectedDistanceTop: Math.round(c.gy),
+      tolerance: 10,
+    };
+  });
+
+  return features;
 }
 
 // Verifica a posição atual da câmera contra as marcas de referência do preset.

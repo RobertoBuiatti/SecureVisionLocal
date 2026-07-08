@@ -18,10 +18,24 @@ export function presetsSnapshotDir(): string {
 }
 
 // Captura um único quadro JPEG da câmera para o caminho indicado.
-export function captureJpeg(camera: Camera, outPath: string): Promise<boolean> {
-  const url = camera.subStreamUrl || camera.streamUrl;
+// Tenta até 3 vezes com intervalo de 500ms entre tentativas, porque a
+// câmera pode estar momentaneamente ocupada (ex.: após salvar um preset).
+export async function captureJpeg(camera: Camera, outPath: string): Promise<boolean> {
+  const urls = [camera.subStreamUrl, camera.streamUrl].filter(Boolean) as string[];
+  for (const url of urls) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const ok = await snapOne(url, outPath);
+      if (ok) return true;
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+  return false;
+}
+
+function snapOne(url: string, outPath: string): Promise<boolean> {
   const args = [
     '-rtsp_transport', 'tcp',
+    '-stimeout', '3000000',
     '-i', url,
     '-frames:v', '1',
     '-q:v', '3',

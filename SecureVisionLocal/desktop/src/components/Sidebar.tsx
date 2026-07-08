@@ -5,6 +5,7 @@ const ITEMS: { view: View; label: string; icon: string }[] = [
   { view: 'dashboard', label: 'Painel', icon: '▦' },
   { view: 'timeline', label: 'Linha do Tempo', icon: '⏱' },
   { view: 'recordings', label: 'Gravações', icon: '⏺' },
+  { view: 'snapshots', label: 'Snapshots', icon: '📷' },
   { view: 'detections', label: 'Detecções', icon: '⚠' },
   { view: 'discovery', label: 'Descobrir', icon: '🔍' },
   { view: 'settings', label: 'Configurações', icon: '⚙' },
