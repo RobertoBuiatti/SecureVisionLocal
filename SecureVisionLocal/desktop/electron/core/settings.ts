@@ -1,13 +1,14 @@
 import { getDb } from './db';
-import { getDefaultRecordingsDir, getDataDir } from './paths';
+import { getDefaultRecordingsDir } from './paths';
 import { join } from 'node:path';
 import type { AppSettings } from '../../src/shared/types';
 
 function defaults(): AppSettings {
+  const recordingsPath = getDefaultRecordingsDir();
   return {
     theme: 'dark',
     language: 'pt-BR',
-    recordingsPath: getDefaultRecordingsDir(),
+    recordingsPath,
     retentionDays: 7,
     maxStorageGB: 100,
     continuousSegmentMinutes: 10,
@@ -22,7 +23,7 @@ function defaults(): AppSettings {
     notificationsEnabled: true,
     webhookUrl: '',
     overlayDetectionMarks: true,
-    snapshotsPath: join(getDataDir(), 'detection-snapshots'),
+    snapshotsPath: join(recordingsPath, 'snapshots'),
     snapshotsMaxCount: 100,
   };
 }
@@ -33,7 +34,10 @@ export function getSettings(): AppSettings {
     | undefined;
   if (!row) return defaults();
   try {
-    return { ...defaults(), ...JSON.parse(row.value) } as AppSettings;
+    const merged = { ...defaults(), ...JSON.parse(row.value) } as AppSettings;
+    // snapshotsPath sempre vive dentro da pasta de gravações
+    merged.snapshotsPath = join(merged.recordingsPath, 'snapshots');
+    return merged;
   } catch {
     return defaults();
   }

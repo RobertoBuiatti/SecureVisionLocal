@@ -32,7 +32,7 @@ export function SettingsView() {
     try {
       const removed = await window.svl.system.runRetention();
       setUsage(await window.svl.system.storageUsage());
-      setRecycleMsg(`Reciclagem concluída. ${removed} gravação(ões) antiga(s) removida(s).`);
+      setRecycleMsg(`Limpeza concluída. ${removed} arquivo(s) removido(s).`);
     } finally {
       setRecycling(false);
     }

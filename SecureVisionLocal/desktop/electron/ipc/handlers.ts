@@ -53,7 +53,7 @@ import { getSettings, updateSettings } from '../core/settings';
 import { applyStartWithWindows } from '../core/autostart';
 import { getSystemStatus } from '../core/system';
 import { recordingManager } from '../core/recordingManager';
-import { getStorageUsage, enforceRetention } from '../core/retention';
+import { getStorageUsage, enforceRetention, purgeAll } from '../core/retention';
 import { localServer } from '../server/localServer';
 import { getDetectionConfig, setDetectionConfig, listDetectionEvents } from '../core/detectionRepository';
 import { detectionManager } from '../core/detectionManager';
@@ -393,6 +393,6 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   // ---- Sistema / Armazenamento / Servidor ----
   ipcMain.handle(IPC.systemStatus, () => getSystemStatus());
   ipcMain.handle(IPC.storageUsage, () => getStorageUsage());
-  ipcMain.handle(IPC.retentionRun, () => enforceRetention());
+  ipcMain.handle(IPC.retentionRun, () => purgeAll());
   ipcMain.handle(IPC.serverInfo, () => localServer.getInfo());
 }
