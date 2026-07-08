@@ -43,6 +43,7 @@ import {
 import { tourRunner } from '../core/tourRunner';
 import { positionVerifier } from '../core/positionVerifier';
 import { captureJpeg, presetsSnapshotDir } from '../core/snapshotService';
+import { computeAndSaveReferenceEmbedding } from '../core/ai/aiVerifier';
 import type { PTZTourStep } from '../../src/shared/types';
 import { join } from 'node:path';
 import { readFile, copyFile } from 'node:fs/promises';
@@ -240,6 +241,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     if (ok) {
       setPresetSnapshot(preset.id, snapPath);
       preset.snapshotPath = snapPath;
+      // Embedding AI de referência (best-effort)
+      const aiUrl = camera.subStreamUrl || camera.streamUrl;
+      computeAndSaveReferenceEmbedding(aiUrl, preset.id).catch(() => {});
     }
     return preset;
   });
@@ -262,6 +266,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     if (captured) {
       setPresetSnapshot(preset.id, snapPath);
       preset.snapshotPath = snapPath;
+      // Re-computa embedding AI para a nova referência
+      const aiUrl = camera.subStreamUrl || camera.streamUrl;
+      computeAndSaveReferenceEmbedding(aiUrl, preset.id).catch(() => {});
     }
     return getPreset(presetId); // retorna dados atualizados do DB
   });

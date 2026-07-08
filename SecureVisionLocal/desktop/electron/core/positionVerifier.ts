@@ -15,6 +15,7 @@ import {
 } from './snapshotService';
 import { getSettings } from './settings';
 import { tourRunner } from './tourRunner';
+import { aiVerifyPosition, computeAndSaveReferenceEmbedding } from './ai/aiVerifier';
 
 // Distância (0..100, menor = mais parecido) acima disso = posição provavelmente errada.
 // Usa correlação normalizada (frameDistance), robusta a brilho — por isso o limiar é baixo.
@@ -193,6 +194,19 @@ class PositionVerifier {
         let ok = score < THRESHOLD;
         let corrected = false;
 
+        // --- AI Cross-Check: verificação semântica por embedding YOLO ---
+        // ZNCC compara pixels e é sensível a iluminação (sol, nuvens, modo noturno).
+        // O embedding YOLO captura o CONTEÚDO da cena (objetos, posições) de forma
+        // robusta a essas variações. Se a IA confirmar que a cena é a mesma, o score
+        // ZNCC é ignorado — a posição está correta, só mudou a luz.
+        if (!ok && !this.aborted) {
+          const aiSim = await aiVerifyPosition(url, preset.id);
+          if (aiSim !== null && aiSim > 0.7) {
+            score = 0;
+            ok = true;
+          }
+        }
+
         // --- ETAPA 1: Correção com marcas de referência (desvios moderados) ---
         // Para scores entre THRESHOLD e MODERATE_SCORE, tenta primeiro o ajuste fino
         // por template matching das marcas (mais preciso que a busca global para
@@ -232,6 +246,10 @@ class PositionVerifier {
           ok = realign.ok;
           corrected = corrected || realign.corrected;
           score = realign.score;
+          // Se o realinhamento corrigiu a posição, atualiza o embedding AI de referência
+          if (realign.corrected) {
+            computeAndSaveReferenceEmbedding(url, preset.id).catch(() => {});
+          }
         }
 
         // --- ETAPA 3: Refinamento fino com marcas de referência ---

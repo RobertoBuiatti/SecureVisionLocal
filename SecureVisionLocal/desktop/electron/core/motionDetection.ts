@@ -3,6 +3,8 @@ import { FFMPEG_PATH } from './ffmpegPath';
 import type { Camera, DetectionConfig, DetectionEvent } from '../../src/shared/types';
 import { insertDetectionEvent, newEventId } from './detectionRepository';
 import { recordingService } from './recording';
+import { captureDetectionSnapshot } from './ai/detectionSnapshotCapture';
+import { getSettings } from './settings';
 
 const W = 320;
 const H = 180;
@@ -150,6 +152,11 @@ export class MotionDetectionService {
           state.recording = false;
         }
       }, RECORD_STOP_DELAY_MS);
+    }
+
+    if (state.config.captureSnapshot) {
+      const s = getSettings();
+      void captureDetectionSnapshot(state.camera, 'motion', score, s.snapshotsPath, s.snapshotsMaxCount);
     }
   }
 }

@@ -1,6 +1,6 @@
 {
   "name": "securevision-local-desktop",
-  "version": "0.1.5",
+  "version": "0.1.7",
   "description": "SecureVision Local - Software Windows para monitoramento de câmeras WiFi/IP (NVR por software)",
   "main": "dist-electron/main.js",
   "author": "SecureVision Local",
