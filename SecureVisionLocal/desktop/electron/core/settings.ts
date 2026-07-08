@@ -1,5 +1,6 @@
 import { getDb } from './db';
-import { getDefaultRecordingsDir } from './paths';
+import { getDefaultRecordingsDir, getDataDir } from './paths';
+import { join } from 'node:path';
 import type { AppSettings } from '../../src/shared/types';
 
 function defaults(): AppSettings {
@@ -21,6 +22,8 @@ function defaults(): AppSettings {
     notificationsEnabled: true,
     webhookUrl: '',
     overlayDetectionMarks: true,
+    snapshotsPath: join(getDataDir(), 'detection-snapshots'),
+    snapshotsMaxCount: 100,
   };
 }
 

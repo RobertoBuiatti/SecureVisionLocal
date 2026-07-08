@@ -14,6 +14,7 @@ function defaults(cameraId: string): DetectionConfig {
     recordAnimal: false,
     trackEnabled: false,
     trackSeconds: 30,
+    captureSnapshot: false,
   };
 }
 

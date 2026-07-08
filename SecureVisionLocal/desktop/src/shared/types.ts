@@ -129,6 +129,8 @@ export interface AppSettings {
   recordingsPath: string;
   retentionDays: number; // 0 = sem limite por idade
   maxStorageGB: number; // 0 = sem limite por espaço
+  snapshotsPath: string; // pasta para salvar snapshots de detecção
+  snapshotsMaxCount: number; // máximo de snapshots por câmera (FIFO)
   continuousSegmentMinutes: number; // duração de cada arquivo da gravação 24/7
   autoRecycle: boolean; // reciclagem: apaga as gravações mais antigas ao atingir o limite
   hardwareAcceleration: 'auto' | 'nvenc' | 'qsv' | 'none';
@@ -185,6 +187,7 @@ export interface DetectionConfig {
   recordAnimal: boolean; // gravar quando detectar animal (IA)
   trackEnabled: boolean; // acompanhar (PTZ) o objeto detectado
   trackSeconds: number; // por quanto tempo seguir após a última detecção
+  captureSnapshot: boolean; // capturar snapshot ao detectar
 }
 
 export interface AiStatus {
@@ -240,6 +243,7 @@ export interface PTZPreset {
   lastCheckAt?: number; // última verificação automática de posição
   lastCheckOk?: boolean; // posição estava correta?
   lastCheckScore?: number; // diferença medida (menor = mais parecido)
+  referencePointCount?: number; // quantas marcas de referência este preset possui
 }
 
 export interface PositionCheckResult {
@@ -270,4 +274,29 @@ export interface PTZTourStatus {
   running: boolean;
   tourId: string | null;
   stepIndex: number;
+}
+
+// ---- Pontos de referência para verificação de posição PTZ ----
+
+export type ReferenceMarkType = 'line' | 'zone';
+
+export interface ReferenceMark {
+  id: string;
+  presetId: string;
+  type: ReferenceMarkType;
+  points: { x: number; y: number }[]; // line: [pt1, pt2]; zone: [pt1, pt2, pt3, pt4]
+  expectedDistanceLeft: number; // distância esperada da borda esquerda (px)
+  expectedDistanceTop: number; // distância esperada da borda superior (px)
+  tolerance: number; // tolerância em pixels
+  createdAt: number;
+}
+
+export interface DetectionSnapshot {
+  id: string;
+  cameraId: string;
+  cameraName?: string;
+  detectionType: DetectionType;
+  timestamp: number;
+  filePath: string;
+  score?: number;
 }

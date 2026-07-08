@@ -6,6 +6,7 @@ import type {
   PTZTourStatus,
   PositionCheckResult,
 } from '../shared/types';
+import { ReferenceMarkEditor } from './ReferenceMarkEditor';
 
 interface PTZTourPanelProps {
   cameraId: string;
@@ -24,6 +25,9 @@ export function PTZTourPanel({ cameraId, onClose }: PTZTourPanelProps) {
   const [busy, setBusy] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [checkResults, setCheckResults] = useState<PositionCheckResult[]>([]);
+  const [editorPreset, setEditorPreset] = useState<PTZPreset | null>(null);
+  const [editingPreset, setEditingPreset] = useState<PTZPreset | null>(null);
+  const [editPresetName, setEditPresetName] = useState('');
 
   const refresh = useCallback(async () => {
     const ps = await window.svl.ptz.listPresets(cameraId);
@@ -100,6 +104,19 @@ export function PTZTourPanel({ cameraId, onClose }: PTZTourPanelProps) {
     setSteps([]);
   }
 
+  function startEditPreset(p: PTZPreset) {
+    setEditingPreset(p);
+    setEditPresetName(p.name);
+  }
+
+  async function saveEditPreset() {
+    if (!editingPreset || !editPresetName.trim()) return;
+    await window.svl.ptz.updatePreset(editingPreset.id, editPresetName.trim());
+    setEditingPreset(null);
+    setEditPresetName('');
+    await refresh();
+  }
+
   async function verifyPositions() {
     setVerifying(true);
     try {
@@ -133,31 +150,52 @@ export function PTZTourPanel({ cameraId, onClose }: PTZTourPanelProps) {
             </button>
           </div>
           <div className="preset-grid">
-            {presets.map((p) => (
-              <div key={p.id} className="preset-item">
-                <div className="preset-thumb">
-                  {snaps[p.id] ? <img src={snaps[p.id]} alt={p.name} /> : <span>sem imagem</span>}
-                  {p.lastCheckAt != null && (
-                    <span className={`pos-badge ${p.lastCheckOk ? 'ok' : 'bad'}`}>
-                      {p.lastCheckOk ? '✓' : '✗'} {p.lastCheckScore}
-                    </span>
+              {presets.map((p) => (
+                <div key={p.id} className="preset-item">
+                  <div className="preset-thumb">
+                    {snaps[p.id] ? <img src={snaps[p.id]} alt={p.name} /> : <span>sem imagem</span>}
+                    {p.lastCheckAt != null && (
+                      <span className={`pos-badge ${p.lastCheckOk ? 'ok' : 'bad'}`}>
+                        {p.lastCheckOk ? '✓' : '✗'} {p.lastCheckScore}
+                      </span>
+                    )}
+                  </div>
+                  {editingPreset?.id === p.id ? (
+                    <div className="preset-edit">
+                      <input
+                        value={editPresetName}
+                        onChange={(e) => setEditPresetName(e.target.value)}
+                        autoFocus
+                      />
+                      <button className="btn small primary" onClick={saveEditPreset}>
+                        Salvar
+                      </button>
+                      <button className="btn small" onClick={() => setEditingPreset(null)}>
+                        Cancelar
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="preset-name">{p.name}</div>
+                      <div className="preset-btns">
+                        <button onClick={() => window.svl.ptz.gotoPreset(cameraId, p.token)}>Ir</button>
+                        <button onClick={() => addStep(p)}>+ rota</button>
+                        <button onClick={() => setEditorPreset(p)}>Marcas</button>
+                        <button onClick={() => startEditPreset(p)}>Editar</button>
+                        <button onClick={() => window.svl.ptz.updatePresetPosition(cameraId, p.id)}>Salvar posição</button>
+                        <button
+                          onClick={async () => {
+                            await window.svl.ptz.deletePreset(p.id);
+                            refresh();
+                          }}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </>
                   )}
                 </div>
-                <div className="preset-name">{p.name}</div>
-                <div className="preset-btns">
-                  <button onClick={() => window.svl.ptz.gotoPreset(cameraId, p.token)}>Ir</button>
-                  <button onClick={() => addStep(p)}>+ rota</button>
-                  <button
-                    onClick={async () => {
-                      await window.svl.ptz.deletePreset(p.id);
-                      refresh();
-                    }}
-                  >
-                    ✕
-                  </button>
-                </div>
-              </div>
-            ))}
+              ))}
             {presets.length === 0 && <p className="muted">Nenhuma posição salva ainda.</p>}
           </div>
           {presets.some((p) => p.snapshotPath) && (
@@ -278,6 +316,14 @@ export function PTZTourPanel({ cameraId, onClose }: PTZTourPanelProps) {
           </button>
         </div>
       </div>
+
+      {editorPreset && (
+        <ReferenceMarkEditor
+          presetId={editorPreset.id}
+          presetName={editorPreset.name}
+          onClose={() => setEditorPreset(null)}
+        />
+      )}
     </div>
   );
 }

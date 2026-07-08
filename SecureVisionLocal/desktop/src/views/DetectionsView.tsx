@@ -133,6 +133,17 @@ function CameraDetectionCard({
           </label>
         )}
       </div>
+
+      <div className="det-snap">
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={cfg.captureSnapshot}
+            onChange={(e) => update({ captureSnapshot: e.target.checked })}
+          />
+          Capturar snapshot ao detectar
+        </label>
+      </div>
     </div>
   );
 }

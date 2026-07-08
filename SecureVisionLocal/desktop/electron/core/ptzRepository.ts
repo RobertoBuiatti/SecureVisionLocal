@@ -70,6 +70,13 @@ export function addPreset(cameraId: string, name: string, token: string): PTZPre
   return preset;
 }
 
+export function updatePreset(id: string, name: string): PTZPreset | null {
+  const existing = getPreset(id);
+  if (!existing) return null;
+  getDb().prepare('UPDATE ptz_presets SET name = ? WHERE id = ?').run(name, id);
+  return { ...existing, name };
+}
+
 export function deletePreset(id: string): boolean {
   return getDb().prepare('DELETE FROM ptz_presets WHERE id = ?').run(id).changes > 0;
 }

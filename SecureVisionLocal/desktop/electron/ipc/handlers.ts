@@ -26,12 +26,13 @@ import { aiDetectionService, isAiRuntimeAvailable } from '../core/ai/aiDetection
 import { isModelReady, isDownloading, modelsDir } from '../core/ai/modelManager';
 import type { AiStatus } from '../../src/shared/types';
 import { listRecordings, getRecording, deleteRecording } from '../core/recordingRepository';
-import { controlPtz, savePresetOnvif, gotoPresetOnvif, disconnectCamera } from '../core/ptz';
+import { controlPtz, savePresetOnvif, gotoPresetOnvif, updatePresetOnvif, disconnectCamera } from '../core/ptz';
 import {
   listPresets,
   addPreset,
   getPreset,
   deletePreset,
+  updatePreset,
   setPresetSnapshot,
   listTours,
   getTour,
@@ -55,8 +56,17 @@ import { getStorageUsage, enforceRetention } from '../core/retention';
 import { localServer } from '../server/localServer';
 import { getDetectionConfig, setDetectionConfig, listDetectionEvents } from '../core/detectionRepository';
 import { detectionManager } from '../core/detectionManager';
-import type { DetectionConfig } from '../../src/shared/types';
+import type { DetectionConfig, ReferenceMark } from '../../src/shared/types';
 import { unlink } from 'node:fs/promises';
+import {
+  saveReferenceMarks,
+  getReferenceMarks,
+} from '../core/referenceMarksRepository';
+import { detectFeatures } from '../core/referenceVerifier';
+import {
+  listSnapshots,
+  deleteSnapshot,
+} from '../core/detectionSnapshotRepository';
 
 // Registra todos os handlers IPC (ponte UI ↔ núcleo).
 export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void {
@@ -234,6 +244,26 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   });
   ipcMain.handle(IPC.ptzListPresets, (_e, cameraId: string) => listPresets(cameraId));
   ipcMain.handle(IPC.ptzDeletePreset, (_e, id: string) => deletePreset(id));
+  ipcMain.handle(IPC.ptzUpdatePreset, async (_e, presetId: string, name: string) => {
+    const updated = updatePreset(presetId, name);
+    return updated;
+  });
+  ipcMain.handle(IPC.ptzUpdatePresetPosition, async (_e, cameraId: string, presetId: string) => {
+    const preset = getPreset(presetId);
+    if (!preset) return null;
+    const camera = getCamera(cameraId);
+    if (!camera) return null;
+    const ok = await updatePresetOnvif(camera, preset.token);
+    if (!ok) return null;
+    // Re-captura o snapshot de referência da posição atual.
+    const snapPath = join(presetsSnapshotDir(), `${preset.id}.jpg`);
+    const captured = await captureJpeg(camera, snapPath);
+    if (captured) {
+      setPresetSnapshot(preset.id, snapPath);
+      preset.snapshotPath = snapPath;
+    }
+    return getPreset(presetId); // retorna dados atualizados do DB
+  });
   ipcMain.handle(IPC.ptzGotoPreset, (_e, cameraId: string, token: string) => {
     const camera = getCamera(cameraId);
     if (!camera) return false;
@@ -275,6 +305,33 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   ipcMain.handle(IPC.ptzVerifyPositions, (_e, cameraId: string) =>
     positionVerifier.verifyCameraById(cameraId),
   );
+
+  // ---- Reference Marks ----
+  ipcMain.handle(
+    IPC.ptzSaveReferenceMarks,
+    (
+      _e,
+      presetId: string,
+      marks: Omit<ReferenceMark, 'id' | 'presetId' | 'createdAt'>[],
+    ) => saveReferenceMarks(presetId, marks),
+  );
+  ipcMain.handle(IPC.ptzGetReferenceMarks, (_e, presetId: string) =>
+    getReferenceMarks(presetId),
+  );
+  ipcMain.handle(IPC.ptzDetectFeatures, async (_e, presetId: string) => {
+    const preset = getPreset(presetId);
+    if (!preset) return [];
+    return detectFeatures(presetId);
+  });
+
+  // ---- Detection Snapshots ----
+  ipcMain.handle(IPC.detectionListSnapshots, (_e, cameraId: string) =>
+    listSnapshots(cameraId),
+  );
+  ipcMain.handle(IPC.detectionDeleteSnapshot, (_e, id: string) => {
+    deleteSnapshot(id);
+    return true;
+  });
 
   // ---- Configurações ----
   ipcMain.handle(IPC.settingsGet, () => getSettings());

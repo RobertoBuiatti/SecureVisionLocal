@@ -7,6 +7,8 @@ import type {
   OnvifProbeResult,
   DetectionConfig,
   DetectionEvent,
+  DetectionSnapshot,
+  ReferenceMark,
   AiStatus,
   Recording,
   StreamInfo,
@@ -58,18 +60,25 @@ export const IPC = {
   ptzCreateTour: 'ptz:create-tour',
   ptzListTours: 'ptz:list-tours',
   ptzDeleteTour: 'ptz:delete-tour',
+  ptzUpdatePreset: 'ptz:update-preset',
+  ptzUpdatePresetPosition: 'ptz:update-preset-position',
   ptzUpdateTour: 'ptz:update-tour',
   ptzStartTour: 'ptz:start-tour',
   ptzStopTour: 'ptz:stop-tour',
   ptzTourStatus: 'ptz:tour-status',
   ptzPresetSnapshot: 'ptz:preset-snapshot',
   ptzVerifyPositions: 'ptz:verify-positions',
+  ptzSaveReferenceMarks: 'ptz:save-reference-marks',
+  ptzGetReferenceMarks: 'ptz:get-reference-marks',
+  ptzDetectFeatures: 'ptz:detect-features',
   settingsGet: 'settings:get',
   settingsUpdate: 'settings:update',
   detectionGetConfig: 'detection:get-config',
   detectionSetConfig: 'detection:set-config',
   detectionListEvents: 'detection:list-events',
   detectionAiStatus: 'detection:ai-status',
+  detectionListSnapshots: 'detection:list-snapshots',
+  detectionDeleteSnapshot: 'detection:delete-snapshot',
   systemStatus: 'system:status',
   storageUsage: 'storage:usage',
   retentionRun: 'retention:run',
@@ -128,6 +137,8 @@ export interface SvlApi {
     listPresets: (cameraId: string) => Promise<PTZPreset[]>;
     deletePreset: (id: string) => Promise<boolean>;
     gotoPreset: (cameraId: string, token: string) => Promise<boolean>;
+    updatePreset: (presetId: string, name: string) => Promise<PTZPreset | null>;
+    updatePresetPosition: (cameraId: string, presetId: string) => Promise<PTZPreset | null>;
     createTour: (cameraId: string, name: string, steps: PTZTourStep[]) => Promise<PTZTour>;
     updateTour: (tourId: string, name: string, steps: PTZTourStep[]) => Promise<PTZTour | null>;
     listTours: (cameraId: string) => Promise<PTZTour[]>;
@@ -137,6 +148,12 @@ export interface SvlApi {
     tourStatus: (cameraId: string) => Promise<PTZTourStatus>;
     presetSnapshot: (presetId: string) => Promise<string | null>;
     verifyPositions: (cameraId: string) => Promise<PositionCheckResult[]>;
+    saveReferenceMarks: (
+      presetId: string,
+      marks: Omit<ReferenceMark, 'id' | 'presetId' | 'createdAt'>[],
+    ) => Promise<ReferenceMark[]>;
+    getReferenceMarks: (presetId: string) => Promise<ReferenceMark[]>;
+    detectFeatures: (presetId: string) => Promise<Array<Omit<ReferenceMark, 'id' | 'presetId' | 'createdAt'>>>;
   };
   settings: {
     get: () => Promise<AppSettings>;
@@ -148,6 +165,8 @@ export interface SvlApi {
     listEvents: () => Promise<DetectionEvent[]>;
     onEvent: (cb: (ev: DetectionEvent) => void) => () => void;
     aiStatus: () => Promise<AiStatus>;
+    listSnapshots: (cameraId: string) => Promise<DetectionSnapshot[]>;
+    deleteSnapshot: (id: string) => Promise<boolean>;
   };
   system: {
     status: () => Promise<SystemStatus>;

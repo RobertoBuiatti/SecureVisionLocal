@@ -30,8 +30,10 @@ import { recordingService } from '../recording';
 import { continuousMoveVector, controlPtz } from '../ptz';
 import { tourRunner } from '../tourRunner';
 import { getTour } from '../ptzRepository';
+import { getSettings } from '../settings';
 import { ensureModel, isModelReady, resolveModelPath, type ModelKey } from './modelManager';
 import { preprocess, decode, nms, cocoToCategory, YOLO_INPUT, type Detection } from './yolo';
+import { captureDetectionSnapshot } from './detectionSnapshotCapture';
 
 const TRACK_DEADZONE = 0.12; // tolerância antes de mover (objeto considerado centralizado)
 const TRACK_GAIN = 0.6; // suavidade do movimento de rastreio
@@ -293,6 +295,11 @@ export class AiDetectionService {
           state.recording = false;
         }
       }, RECORD_STOP_DELAY_MS);
+    }
+
+    if (state.config.captureSnapshot) {
+      const s = getSettings();
+      void captureDetectionSnapshot(state.camera, type, score, s.snapshotsPath, s.snapshotsMaxCount);
     }
   }
 

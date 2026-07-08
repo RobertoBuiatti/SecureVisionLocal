@@ -174,6 +174,22 @@ export function SettingsView() {
           />
           Marcar detecções no vídeo (traços finos nos clipes por evento — usa mais CPU)
         </label>
+        <label>
+          Pasta de snapshots de detecção
+          <input
+            value={draft.snapshotsPath}
+            onChange={(e) => set('snapshotsPath', e.target.value)}
+          />
+        </label>
+        <label>
+          Máx. snapshots por câmera
+          <input
+            type="number"
+            min={10}
+            value={draft.snapshotsMaxCount}
+            onChange={(e) => set('snapshotsMaxCount', Number(e.target.value))}
+          />
+        </label>
       </div>
 
       <div className="storage-panel">

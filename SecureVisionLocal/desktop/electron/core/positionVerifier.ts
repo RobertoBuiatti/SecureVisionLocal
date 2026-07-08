@@ -3,6 +3,8 @@ import type { Camera, PositionCheckResult, PTZDirection } from '../../src/shared
 import { listCameras, getCamera } from './cameraRepository';
 import { listPresets, setPresetCheck, getTour } from './ptzRepository';
 import { gotoPresetOnvif, updatePresetOnvif, controlPtz } from './ptz';
+import { getReferenceMarks } from './referenceMarksRepository';
+import { verifyWithReferences, fineTune } from './referenceVerifier';
 import {
   captureGrayFrame,
   captureGrayFrameMedian,
@@ -198,6 +200,26 @@ class PositionVerifier {
           ok = realign.ok;
           corrected = realign.corrected;
           score = realign.score;
+        }
+
+        // Refinamento fino com marcas de referência (se o preset tiver marcas salvas).
+        // Usa pontos de alto contraste (linhas/zonas) para corrigir desvios residuais
+        // que o ZNCC global pode não capturar devido a mudanças na cena.
+        if (ok && !this.aborted) {
+          const marks = getReferenceMarks(preset.id);
+          if (marks.length > 0) {
+            const refResult = await verifyWithReferences(camera, preset.id);
+            if (refResult.adjusted && refResult.confidence > 0.5) {
+              await fineTune(camera, refResult.dx, refResult.dy);
+              await sleep(SETTLE_MS);
+              const finalCur = await captureGrayFrameMedian(url, false, MEASURE_SAMPLES);
+              if (finalCur) {
+                score = frameDistance(finalCur, ref);
+                ok = score < THRESHOLD;
+                corrected = true;
+              }
+            }
+          }
         }
 
         setPresetCheck(preset.id, ok, score);

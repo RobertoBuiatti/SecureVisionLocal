@@ -846,6 +846,14 @@ html,
 .det-record .check.disabled {
   opacity: 0.6;
 }
+.det-snap {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  margin-top: 10px;
+}
+.det-snap .check {
+  font-size: 13px;
+}
 .det-track {
   border-top: 1px solid var(--border);
   padding-top: 10px;
@@ -1048,4 +1056,121 @@ html,
   gap: 16px;
   font-size: 12px;
   margin-top: 8px;
+}
+
+/* Editor de Marcas de Referência PTZ */
+.reference-editor-modal {
+  width: 860px;
+  max-width: 92vw;
+  max-height: 88vh;
+}
+.ref-editor-layout {
+  display: flex;
+  gap: 16px;
+  margin: 12px 0;
+}
+.ref-canvas-area {
+  flex: 1;
+  min-width: 0;
+}
+.ref-image-container {
+  position: relative;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.ref-image,
+.ref-canvas-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.ref-canvas-overlay {
+  cursor: crosshair;
+  z-index: 1;
+}
+.ref-image-placeholder {
+  color: var(--muted);
+  font-size: 13px;
+}
+.ref-toolbar {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.ref-toolbar .btn.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+.ref-marks-panel {
+  width: 280px;
+  min-width: 220px;
+  max-height: 60vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ref-mark-row {
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+.ref-mark-row.selected {
+  border-color: var(--primary);
+}
+.ref-mark-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.ref-mark-type {
+  font-weight: 700;
+  font-size: 12px;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.ref-mark-type.line {
+  color: #00ff88;
+  background: #00ff8818;
+}
+.ref-mark-type.zone {
+  color: #ff8800;
+  background: #ff880018;
+}
+.ref-mark-points {
+  flex: 1;
+  font-size: 10px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ref-mark-fields {
+  display: flex;
+  gap: 6px;
+}
+.ref-mark-fields label {
+  flex: 1;
+  font-size: 10px;
+  color: var(--muted);
+  gap: 2px;
+  margin-bottom: 0;
+}
+.ref-mark-fields input {
+  font-size: 11px;
+  padding: 3px 5px;
+  border-radius: 4px;
+  width: 100%;
 }

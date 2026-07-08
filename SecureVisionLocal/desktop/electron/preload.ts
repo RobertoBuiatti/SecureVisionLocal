@@ -49,6 +49,8 @@ const api: SvlApi = {
     savePreset: (cameraId, name) => ipcRenderer.invoke(IPC.ptzSavePreset, cameraId, name),
     listPresets: (cameraId) => ipcRenderer.invoke(IPC.ptzListPresets, cameraId),
     deletePreset: (id) => ipcRenderer.invoke(IPC.ptzDeletePreset, id),
+    updatePreset: (presetId, name) => ipcRenderer.invoke(IPC.ptzUpdatePreset, presetId, name),
+    updatePresetPosition: (cameraId, presetId) => ipcRenderer.invoke(IPC.ptzUpdatePresetPosition, cameraId, presetId),
     gotoPreset: (cameraId, token) => ipcRenderer.invoke(IPC.ptzGotoPreset, cameraId, token),
     createTour: (cameraId, name, steps) =>
       ipcRenderer.invoke(IPC.ptzCreateTour, cameraId, name, steps),
@@ -61,6 +63,10 @@ const api: SvlApi = {
     tourStatus: (cameraId) => ipcRenderer.invoke(IPC.ptzTourStatus, cameraId),
     presetSnapshot: (presetId) => ipcRenderer.invoke(IPC.ptzPresetSnapshot, presetId),
     verifyPositions: (cameraId) => ipcRenderer.invoke(IPC.ptzVerifyPositions, cameraId),
+    saveReferenceMarks: (presetId, marks) =>
+      ipcRenderer.invoke(IPC.ptzSaveReferenceMarks, presetId, marks),
+    getReferenceMarks: (presetId) => ipcRenderer.invoke(IPC.ptzGetReferenceMarks, presetId),
+    detectFeatures: (presetId) => ipcRenderer.invoke(IPC.ptzDetectFeatures, presetId),
   },
   settings: {
     get: () => ipcRenderer.invoke(IPC.settingsGet),
@@ -76,6 +82,8 @@ const api: SvlApi = {
       return () => ipcRenderer.off(IPC.evtDetection, listener);
     },
     aiStatus: () => ipcRenderer.invoke(IPC.detectionAiStatus),
+    listSnapshots: (cameraId) => ipcRenderer.invoke(IPC.detectionListSnapshots, cameraId),
+    deleteSnapshot: (id) => ipcRenderer.invoke(IPC.detectionDeleteSnapshot, id),
   },
   system: {
     status: () => ipcRenderer.invoke(IPC.systemStatus),

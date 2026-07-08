@@ -116,6 +116,33 @@ function migrate(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_presets_camera ON ptz_presets(cameraId);
     CREATE INDEX IF NOT EXISTS idx_tours_camera ON ptz_tours(cameraId);
     CREATE INDEX IF NOT EXISTS idx_events_time ON events(timestamp);
+
+    CREATE TABLE IF NOT EXISTS preset_reference_marks (
+      id TEXT PRIMARY KEY,
+      presetId TEXT NOT NULL,
+      type TEXT NOT NULL,
+      points TEXT NOT NULL,
+      expectedDistanceLeft REAL NOT NULL DEFAULT 0,
+      expectedDistanceTop REAL NOT NULL DEFAULT 0,
+      tolerance REAL NOT NULL DEFAULT 10,
+      createdAt INTEGER NOT NULL,
+      FOREIGN KEY (presetId) REFERENCES ptz_presets(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_ref_marks_preset ON preset_reference_marks(presetId);
+
+    CREATE TABLE IF NOT EXISTS detection_snapshots (
+      id TEXT PRIMARY KEY,
+      cameraId TEXT NOT NULL,
+      detectionType TEXT NOT NULL,
+      timestamp INTEGER NOT NULL,
+      filePath TEXT NOT NULL,
+      score REAL,
+      FOREIGN KEY (cameraId) REFERENCES cameras(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_det_snaps_camera ON detection_snapshots(cameraId);
+    CREATE INDEX IF NOT EXISTS idx_det_snaps_time ON detection_snapshots(timestamp);
   `);
 
   addColumnIfMissing(database, 'cameras', 'onvifPort', 'INTEGER');
