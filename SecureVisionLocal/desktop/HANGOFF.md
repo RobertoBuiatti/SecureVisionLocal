@@ -56,6 +56,12 @@
 3. O log agora mostra qual URL RTSP está sendo tentada e quantas restam
 4. Se ainda falhar, verificar no log se o FFmpeg stderr mostra algo como "404" ou "path not found"
 
+#### 5. Correção de `injectCredentials` no HLS Manager
+**Arquivo:** `electron/server/hlsManager.ts:75`
+
+- **Problema:** `hlsManager.ts` usava `camera.streamUrl` diretamente no FFmpeg sem chamar `injectCredentials()`, ao contrário de todos os outros consumidores (`streaming.ts`, `continuousRecording.ts`, `recording.ts`, `snapshotService.ts`, `motionDetection.ts`). O streaming HLS quebrava para câmeras cuja URL não tinha `user:pass@` embutido.
+- **Solução:** Adicionado `injectCredentials(camera.streamUrl, camera.username, camera.password)` no argumento `-i` do FFmpeg.
+
 ### Problemas conhecidos
 
 - Se todas as URLs falharem, o sistema entra em loop: testa todos fallbacks → espera 3s → repete do início. Isso gera logs mas não danifica nada.

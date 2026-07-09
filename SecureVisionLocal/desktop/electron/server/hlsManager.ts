@@ -3,6 +3,7 @@ import { mkdirSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { FFMPEG_PATH } from '../core/ffmpegPath';
 import { hwaccelArgs } from '../core/hwaccel';
+import { injectCredentials } from '../core/onvifInfo';
 import { isSafeStreamUrl } from '../core/urlGuard';
 import { insertCameraLog } from '../core/cameraLogger';
 import type { Camera } from '../../src/shared/types';
@@ -74,7 +75,7 @@ export class HlsManager {
     const args = [
       ...hwaccelArgs(),
       '-rtsp_transport', 'tcp',
-      '-i', camera.streamUrl,
+      '-i', injectCredentials(camera.streamUrl, camera.username, camera.password),
       '-an',
       '-c:v', 'libx264',
       '-preset', 'veryfast',
