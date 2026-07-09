@@ -3,6 +3,7 @@ import { listCameras } from './cameraRepository';
 import { continuousRecordingService } from './continuousRecording';
 import { enforceRetention } from './retention';
 import { scheduleManager } from './scheduleManager';
+import { insertCameraLog } from './cameraLogger';
 
 // Uma câmera deve gravar continuamente se estiver marcada como 24/7 OU se estiver
 // dentro de uma janela de agendamento ativa neste momento.
@@ -57,8 +58,17 @@ class RecordingManager {
   // Quando a câmera volta, o monitor a marca online e o próximo ciclo religa tudo.
   private reconcile(): void {
     for (const camera of listCameras()) {
-      if (shouldRecordContinuous(camera) && camera.status !== 'offline') {
-        if (!continuousRecordingService.isActive(camera.id)) {
+      if (shouldRecordContinuous(camera)) {
+        if (camera.status === 'offline') {
+          insertCameraLog(
+            camera.id,
+            camera.name,
+            'warn',
+            `Gravação 24/7 de "${camera.name}" pulada — câmera offline`,
+            `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\n\nA câmera está marcada como offline. A gravação contínua será ignorada até que a conexão seja restabelecida. Isso evita respawn infinito de FFmpeg contra uma câmera inacessível.`,
+            'recording',
+          );
+        } else if (!continuousRecordingService.isActive(camera.id)) {
           continuousRecordingService.start(camera);
         }
       } else if (!shouldRecordContinuous(camera) && continuousRecordingService.isActive(camera.id)) {

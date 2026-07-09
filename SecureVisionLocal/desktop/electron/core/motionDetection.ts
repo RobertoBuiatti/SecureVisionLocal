@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { FFMPEG_PATH } from './ffmpegPath';
+import { insertCameraLog } from './cameraLogger';
 import type { Camera, DetectionConfig, DetectionEvent } from '../../src/shared/types';
 import { insertDetectionEvent, newEventId } from './detectionRepository';
 import { recordingService } from './recording';
@@ -68,18 +69,54 @@ export class MotionDetectionService {
       recording: false,
     };
 
-    ffmpeg.on('error', () => this.stop(camera.id));
+    ffmpeg.on('error', (err) => {
+      insertCameraLog(
+        camera.id,
+        camera.name,
+        'error',
+        `Falha ao iniciar detecção de movimento em "${camera.name}"`,
+        `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nUsuário: ${camera.username || '—'}\nURL (sub): ${(camera.subStreamUrl || camera.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nErro FFmpeg: ${err?.message || 'Erro desconhecido'}\n\nA detecção de movimento não pôde ser iniciada. O sistema tentará novamente no próximo ciclo de reconciliação.`,
+        'detection',
+      );
+      this.stop(camera.id);
+    });
     ffmpeg.on('close', () => {
-      if (this.active.get(camera.id)?.ffmpeg === ffmpeg) this.active.delete(camera.id);
+      if (this.active.get(camera.id)?.ffmpeg === ffmpeg) {
+        insertCameraLog(
+          camera.id,
+          camera.name,
+          'warn',
+          `Detecção de movimento de "${camera.name}" encerrada inesperadamente`,
+          `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nUsuário: ${camera.username || '—'}\nURL: ${(camera.subStreamUrl || camera.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\nO processo FFmpeg de detecção fechou sozinho. Será reiniciado no próximo ciclo de reconciliação.`,
+          'detection',
+        );
+        this.active.delete(camera.id);
+      }
     });
     ffmpeg.stdout.on('data', (chunk: Buffer) => this.onData(camera.id, chunk));
 
     this.active.set(camera.id, state);
+    insertCameraLog(
+      camera.id,
+      camera.name,
+      'info',
+      `Detecção de movimento de "${camera.name}" iniciada`,
+      `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nUsuário: ${camera.username || '—'}\nURL: ${(camera.subStreamUrl || camera.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nSensibilidade: ${config.sensitivity} (limiar: ${sensitivityToThreshold(config.sensitivity).toFixed(1)})\nGravar movimento: ${config.recordMotion ? 'sim' : 'não'}\nCapturar snapshot: ${config.captureSnapshot ? 'sim' : 'não'}\n\nA detecção de movimento foi iniciada com sucesso. O FFmpeg está analisando quadros em 320x180 a 3 fps.`,
+      'detection',
+    );
   }
 
   stop(cameraId: string): void {
     const state = this.active.get(cameraId);
     if (!state) return;
+    insertCameraLog(
+      cameraId,
+      state.camera.name,
+      'info',
+      `Detecção de movimento de "${state.camera.name}" interrompida`,
+      `Câmera: ${state.camera.name}\nIP: ${state.camera.ip}:${state.camera.port}\nUsuário: ${state.camera.username || '—'}\n\nA detecção de movimento foi interrompida intencionalmente.`,
+      'detection',
+    );
     this.active.delete(cameraId);
     if (state.recordStopTimer) clearTimeout(state.recordStopTimer);
     try {

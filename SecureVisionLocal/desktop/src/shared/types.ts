@@ -291,6 +291,17 @@ export interface ReferenceMark {
   createdAt: number;
 }
 
+export interface CameraLogEntry {
+  id: string;
+  cameraId: string;
+  cameraName: string;
+  level: 'error' | 'warn' | 'info';
+  message: string;
+  details: string;
+  timestamp: number;
+  source: string;
+}
+
 export interface DetectionSnapshot {
   id: string;
   cameraId: string;

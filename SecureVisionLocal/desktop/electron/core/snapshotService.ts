@@ -1,7 +1,9 @@
 import { spawn } from 'node:child_process';
+import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { mkdirSync, existsSync } from 'node:fs';
 import { FFMPEG_PATH } from './ffmpegPath';
+import { insertCameraLog } from './cameraLogger';
 import type { Camera } from '../../src/shared/types';
 import { getThumbnailsDir } from './paths';
 import { injectCredentials } from './onvifInfo';
@@ -27,10 +29,30 @@ export async function captureJpeg(camera: Camera, outPath: string): Promise<bool
   for (const url of urls) {
     for (let attempt = 0; attempt < 3; attempt++) {
       const ok = await snapOne(url, outPath);
-      if (ok) return true;
+      if (ok) {
+        let fileSize = 0;
+        try { fileSize = statSync(outPath).size; } catch { /* noop */ }
+        insertCameraLog(
+          camera.id,
+          camera.name,
+          'info',
+          `Snapshot de "${camera.name}" capturado (${Math.round(fileSize / 1024)}KB)`,
+          `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nArquivo: ${outPath}\nTamanho: ${Math.round(fileSize / 1024)}KB\nTentativa: ${attempt + 1} de 3\nURL usada: ${url.replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}`,
+          'snapshot',
+        );
+        return true;
+      }
       if (attempt < 2) await new Promise((r) => setTimeout(r, 500));
     }
   }
+  insertCameraLog(
+    camera.id,
+    camera.name,
+    'error',
+    `Falha ao capturar snapshot de "${camera.name}" após múltiplas tentativas`,
+    `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nUsuário: ${camera.username || '—'}\nURL principal: ${(camera.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nURL secundária: ${(camera.subStreamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nCaminho de saída: ${outPath}\n\nForam feitas 3 tentativas em cada URL disponível. O FFmpeg retornou código de erro em todas. Verifique se a câmera está acessível e a URL de stream está correta.`,
+    'snapshot',
+  );
   return false;
 }
 
@@ -44,6 +66,14 @@ function snapOne(url: string, outPath: string): Promise<boolean> {
     '-y', outPath,
   ];
   return run(args);
+}
+
+function run(args: string[]): Promise<boolean> {
+  return new Promise((resolve) => {
+    const ff = spawn(FFMPEG_PATH, args, { stdio: 'ignore' });
+    ff.on('error', () => resolve(false));
+    ff.on('close', (code) => resolve(code === 0));
+  });
 }
 
 // Captura um quadro cinza GRIDxGRID (cru) de um RTSP ou de um arquivo, em memória.
@@ -239,12 +269,4 @@ export function estimateShift(cur: Buffer, ref: Buffer, side = ANALYSIS_SIZE): S
   }
 
   return { dx: best.dx, dy: best.dy, confidence: Math.max(0, best.score) };
-}
-
-function run(args: string[]): Promise<boolean> {
-  return new Promise((resolve) => {
-    const ff = spawn(FFMPEG_PATH, args, { stdio: 'ignore' });
-    ff.on('error', () => resolve(false));
-    ff.on('close', (code) => resolve(code === 0));
-  });
 }

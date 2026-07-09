@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { FFMPEG_PATH } from '../core/ffmpegPath';
 import { hwaccelArgs } from '../core/hwaccel';
 import { isSafeStreamUrl } from '../core/urlGuard';
+import { insertCameraLog } from '../core/cameraLogger';
 import type { Camera } from '../../src/shared/types';
 import { getDataDir } from '../core/paths';
 
@@ -11,6 +12,7 @@ const IDLE_TIMEOUT_MS = 30_000; // encerra a sessão após 30s sem acessos
 
 interface HlsSession {
   cameraId: string;
+  cameraName: string;
   dir: string;
   ffmpeg: ChildProcess;
   lastAccess: number;
@@ -56,7 +58,17 @@ export class HlsManager {
     }
     mkdirSync(dir, { recursive: true });
 
-    if (!isSafeStreamUrl(camera.streamUrl)) return dir; // URL inválida → sem sessão
+    if (!isSafeStreamUrl(camera.streamUrl)) {
+      insertCameraLog(
+        camera.id,
+        camera.name,
+        'error',
+        `URL inválida para HLS em "${camera.name}"`,
+        `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nURL rejeitada: ${(camera.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\nA URL do stream foi rejeitada pelo validador de segurança (isSafeStreamUrl). Edite a câmera com uma URL válida para que o streaming HLS funcione no app mobile.`,
+        'hls',
+      );
+      return dir;
+    }
 
     const playlist = join(dir, 'index.m3u8');
     const args = [
@@ -78,16 +90,40 @@ export class HlsManager {
     ];
 
     const ffmpeg = spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'ignore', 'ignore'] });
-    ffmpeg.on('error', () => {
+    ffmpeg.on('error', (err) => {
+      insertCameraLog(
+        camera.id,
+        camera.name,
+        'error',
+        `Falha ao iniciar stream HLS para "${camera.name}"`,
+        `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nUsuário: ${camera.username || '—'}\nURL: ${(camera.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nErro FFmpeg: ${err?.message || 'Erro desconhecido'}\n\nO stream HLS (para app mobile/navegador) não pôde ser iniciado. Verifique se a câmera está acessível.`,
+        'hls',
+      );
       this.stopSession(camera.id);
     });
     ffmpeg.on('close', () => {
       if (this.sessions.get(camera.id)?.ffmpeg === ffmpeg) {
+        insertCameraLog(
+          camera.id,
+          camera.name,
+          'warn',
+          `Stream HLS encerrado inesperadamente para "${camera.name}"`,
+          `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nURL: ${(camera.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\nO processo FFmpeg do HLS fechou sozinho. Uma nova sessão será criada na próxima solicitação do app mobile/navegador.`,
+          'hls',
+        );
         this.sessions.delete(camera.id);
       }
     });
 
-    this.sessions.set(camera.id, { cameraId: camera.id, dir, ffmpeg, lastAccess: Date.now() });
+    this.sessions.set(camera.id, { cameraId: camera.id, cameraName: camera.name, dir, ffmpeg, lastAccess: Date.now() });
+    insertCameraLog(
+      camera.id,
+      camera.name,
+      'info',
+      `Stream HLS para "${camera.name}" iniciado`,
+      `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nUsuário: ${camera.username || '—'}\nURL: ${(camera.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nDiretório HLS: ${dir}\nPlaylist: index.m3u8\nSegmentos: 2s, máx 6 no playlist\n\nO stream HLS foi iniciado com sucesso para acesso pelo app mobile/navegador.`,
+      'hls',
+    );
     return dir;
   }
 
@@ -99,7 +135,16 @@ export class HlsManager {
   stopSession(cameraId: string): void {
     const s = this.sessions.get(cameraId);
     if (!s) return;
+    const cameraName = s.cameraName;
     this.sessions.delete(cameraId);
+    insertCameraLog(
+      cameraId,
+      cameraName,
+      'info',
+      `Sessão HLS para "${cameraName}" encerrada`,
+      `Câmera: ${cameraName}\nID: ${cameraId}\n\nA sessão de streaming HLS foi encerrada (inatividade ou parada intencional).`,
+      'hls',
+    );
     try {
       s.ffmpeg.kill('SIGKILL');
     } catch {
@@ -115,7 +160,17 @@ export class HlsManager {
   private sweepIdle(): void {
     const now = Date.now();
     for (const [id, s] of this.sessions) {
-      if (now - s.lastAccess > IDLE_TIMEOUT_MS) this.stopSession(id);
+      if (now - s.lastAccess > IDLE_TIMEOUT_MS) {
+        insertCameraLog(
+          id,
+          s.cameraName,
+          'info',
+          `Sessão HLS de "${s.cameraName}" removida por inatividade (${Math.round((now - s.lastAccess) / 1000)}s ociosa)`,
+          `Câmera: ${s.cameraName}\nID: ${id}\nTempo ocioso: ${Math.round((now - s.lastAccess) / 1000)}s\nLimite: ${IDLE_TIMEOUT_MS / 1000}s\n\nA sessão HLS foi encerrada por idle timeout — ninguém acessava o stream há mais de 30s. Uma nova sessão será criada automaticamente na próxima solicitação.`,
+          'hls',
+        );
+        this.stopSession(id);
+      }
     }
   }
 }

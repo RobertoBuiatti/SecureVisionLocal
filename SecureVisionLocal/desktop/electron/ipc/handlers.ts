@@ -50,6 +50,7 @@ import { readFile, copyFile } from 'node:fs/promises';
 import { listSchedules, upsertSchedule, deleteSchedule } from '../core/scheduleRepository';
 import { testConnection } from '../core/connection';
 import { getSettings, updateSettings } from '../core/settings';
+import { listCameraLogs, clearCameraLogs } from '../core/cameraLogger';
 import { applyStartWithWindows } from '../core/autostart';
 import { getSystemStatus } from '../core/system';
 import { recordingManager } from '../core/recordingManager';
@@ -364,6 +365,14 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
       applyStartWithWindows();
     }
     return updated;
+  });
+
+  // ---- Logs de Câmera ----
+  ipcMain.handle(IPC.cameraLogsGet, (_e, cameraId?: string, limit?: number) =>
+    listCameraLogs(cameraId, limit ?? 100),
+  );
+  ipcMain.handle(IPC.cameraLogsClear, (_e, cameraId?: string) => {
+    clearCameraLogs(cameraId);
   });
 
   // ---- Detecção ----

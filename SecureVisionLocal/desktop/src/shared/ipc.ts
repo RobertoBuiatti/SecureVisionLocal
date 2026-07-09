@@ -8,6 +8,7 @@ import type {
   DetectionConfig,
   DetectionEvent,
   DetectionSnapshot,
+  CameraLogEntry,
   ReferenceMark,
   AiStatus,
   Recording,
@@ -30,6 +31,8 @@ import type {
 
 // Nomes dos canais IPC (domínio:ação).
 export const IPC = {
+  cameraLogsGet: 'camera-logs:get',
+  cameraLogsClear: 'camera-logs:clear',
   camerasList: 'cameras:list',
   camerasAdd: 'cameras:add',
   camerasUpdate: 'cameras:update',
@@ -175,6 +178,10 @@ export interface SvlApi {
     storageUsage: () => Promise<StorageUsage>;
     runRetention: () => Promise<number>;
     serverInfo: () => Promise<ServerInfo>;
+  };
+  cameraLogs: {
+    get: (cameraId?: string, limit?: number) => Promise<CameraLogEntry[]>;
+    clear: (cameraId?: string) => Promise<void>;
   };
   events: {
     onCameraStatus: (cb: (p: { cameraId: string; status: string }) => void) => () => void;

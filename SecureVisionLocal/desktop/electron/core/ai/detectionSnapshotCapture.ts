@@ -1,8 +1,9 @@
 import { join } from 'node:path';
-import { mkdirSync, existsSync } from 'node:fs';
+import { mkdirSync, existsSync, statSync } from 'node:fs';
 import type { Camera, DetectionType } from '../../../src/shared/types';
 import { captureJpeg } from '../snapshotService';
 import { insertSnapshot, countSnapshotsByCamera, deleteOldestSnapshot, listSnapshots } from '../detectionSnapshotRepository';
+import { insertCameraLog } from '../cameraLogger';
 
 const MIN_INTERVAL_MS = 5000;
 const lastCapture = new Map<string, number>();
@@ -41,6 +42,16 @@ export async function captureDetectionSnapshot(
     filePath,
     score: Math.round(score * 100),
   });
+  let fileSize = 0;
+  try { fileSize = statSync(filePath).size; } catch { /* noop */ }
+  insertCameraLog(
+    camera.id,
+    camera.name,
+    'info',
+    `Snapshot por ${detectionType} de "${camera.name}" salvo (${Math.round(fileSize / 1024)}KB, score ${Math.round(score)})`,
+    `Câmera: ${camera.name}\nArquivo: ${filePath}\nTamanho: ${Math.round(fileSize / 1024)}KB\nScore: ${Math.round(score)}\nTipo: ${detectionType}\n\nSnapshot capturado automaticamente após detecção de movimento.`,
+    'snapshot',
+  );
 
   const total = countSnapshotsByCamera(camera.id);
   if (total > maxCount) {

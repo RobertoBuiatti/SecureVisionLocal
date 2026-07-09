@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { FFMPEG_PATH } from './ffmpegPath';
 import { isSafeStreamUrl } from './urlGuard';
+import { insertCameraLog } from './cameraLogger';
 import type { Camera, DetectionType, Recording } from '../../src/shared/types';
 import { getSettings } from './settings';
 import { insertRecording, finalizeRecording } from './recordingRepository';
@@ -97,12 +98,29 @@ export class RecordingService {
 
     insertRecording(recording);
     this.active.set(camera.id, { recording, ffmpeg });
+    insertCameraLog(
+      camera.id,
+      camera.name,
+      'info',
+      `Gravação por detecção de "${camera.name}" iniciada (${detectionType || 'manual'})`,
+      `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nTipo: ${detectionType || 'manual'}\nArquivo: ${filePath}\n\nA gravação por evento foi iniciada. O vídeo está sendo salvo sem reencode (cópia direta) para mínimo uso de CPU.`,
+      'recording',
+    );
     return recording;
   }
 
   stop(cameraId: string): void {
     const item = this.active.get(cameraId);
     if (!item) return;
+    const camName = item.recording.cameraName || cameraId;
+    insertCameraLog(
+      cameraId,
+      camName,
+      'info',
+      `Gravação por detecção de "${camName}" finalizando (${item.recording.detectionType || 'manual'})`,
+      `Câmera: ${camName}\nArquivo: ${item.recording.filePath}\nDuração até o momento: ${Math.round((Date.now() - item.recording.startTime) / 1000)}s\n\nEnviando comando de parada para o FFmpeg. O arquivo será finalizado com trailer MP4 correto.`,
+      'recording',
+    );
     try {
       // 'q' faz o FFmpeg encerrar gravando o trailer do MP4 corretamente.
       item.ffmpeg.stdin?.write('q');
@@ -123,6 +141,15 @@ export class RecordingService {
     const item = this.active.get(cameraId);
     if (!item) return;
     this.active.delete(cameraId);
+    const recName2 = item.recording.cameraName || cameraId;
+    insertCameraLog(
+      cameraId,
+      recName2,
+      'info',
+      `Gravação por detecção de "${recName2}" encerrada`,
+      `Câmera: ${recName2}\nArquivo: ${item.recording.filePath}\nDuração: ${Math.round((Date.now() - item.recording.startTime) / 1000)}s\n\nO processo FFmpeg da gravação foi encerrado. O arquivo será finalizado no banco de dados.`,
+      'recording',
+    );
 
     const endTime = Date.now();
     let fileSize = 0;

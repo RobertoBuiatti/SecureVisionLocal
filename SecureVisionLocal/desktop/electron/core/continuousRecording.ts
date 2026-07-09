@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { FFMPEG_PATH } from './ffmpegPath';
 import { isSafeStreamUrl } from './urlGuard';
+import { insertCameraLog } from './cameraLogger';
 import type { Camera, Recording } from '../../src/shared/types';
 import { getSettings } from './settings';
 import {
@@ -47,7 +48,17 @@ export class ContinuousRecordingService {
 
   start(camera: Camera): void {
     if (this.active.has(camera.id)) return;
-    if (!isSafeStreamUrl(camera.streamUrl)) return;
+    if (!isSafeStreamUrl(camera.streamUrl)) {
+      insertCameraLog(
+        camera.id,
+        camera.name,
+        'error',
+        `Gravação 24/7 não iniciada para "${camera.name}": URL inválida`,
+        `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nURL rejeitada: ${(camera.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\nA URL do stream foi rejeitada pelo validador de segurança. Edite a câmera com uma URL de stream válida para habilitar a gravação contínua 24/7.`,
+        'recording',
+      );
+      return;
+    }
 
     const dir = cameraDir(camera.id);
     const segmentSeconds = Math.max(1, getSettings().continuousSegmentMinutes) * 60;
@@ -72,25 +83,56 @@ export class ContinuousRecordingService {
     ];
 
     const ffmpeg = spawn(FFMPEG_PATH, args, { stdio: ['pipe', 'ignore', 'ignore'] });
-    ffmpeg.on('error', () => {
+    ffmpeg.on('error', (err) => {
+      insertCameraLog(
+        camera.id,
+        camera.name,
+        'error',
+        `Falha na gravação 24/7 de "${camera.name}"`,
+        `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nUsuário: ${camera.username || '—'}\nURL: ${(camera.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nErro FFmpeg: ${err?.message || 'Erro desconhecido'}\n\nA gravação contínua 24/7 encontrou um erro. O sistema tentará reiniciar automaticamente no próximo ciclo de reconciliação.`,
+        'recording',
+      );
       if (this.active.get(camera.id)?.ffmpeg === ffmpeg) {
         this.active.delete(camera.id);
       }
     });
     ffmpeg.on('close', () => {
-      // Se não foi parada intencional, o manager reinicia no próximo ciclo.
       if (this.active.get(camera.id)?.ffmpeg === ffmpeg) {
+        insertCameraLog(
+          camera.id,
+          camera.name,
+          'warn',
+          `Gravação 24/7 de "${camera.name}" encerrada inesperadamente`,
+          `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nUsuário: ${camera.username || '—'}\nURL: ${(camera.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\nO processo FFmpeg da gravação 24/7 fechou sozinho. O RecordingManager reiniciará automaticamente no próximo ciclo de reconciliação (30s).`,
+          'recording',
+        );
         this.active.delete(camera.id);
         this.finalizeOpenSegments(camera.id);
       }
     });
 
     this.active.set(camera.id, { camera, dir, ffmpeg });
+    insertCameraLog(
+      camera.id,
+      camera.name,
+      'info',
+      `Gravação 24/7 de "${camera.name}" iniciada`,
+      `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nUsuário: ${camera.username || '—'}\nURL: ${(camera.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nDiretório: ${dir}\nSegmento: ${getSettings().continuousSegmentMinutes}min\n\nA gravação contínua 24/7 foi iniciada com sucesso. Os segmentos serão salvos no diretório acima.`,
+      'recording',
+    );
   }
 
   stop(cameraId: string): void {
     const item = this.active.get(cameraId);
     if (!item) return;
+    insertCameraLog(
+      cameraId,
+      item.camera.name,
+      'info',
+      `Gravação 24/7 de "${item.camera.name}" interrompida`,
+      `Câmera: ${item.camera.name}\nIP: ${item.camera.ip}:${item.camera.port}\nUsuário: ${item.camera.username || '—'}\nURL: ${(item.camera.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\nA gravação contínua foi interrompida intencionalmente (usuário desativou 24/7 ou câmera foi removida).`,
+      'recording',
+    );
     this.active.delete(cameraId);
     try {
       item.ffmpeg.stdin?.write('q');

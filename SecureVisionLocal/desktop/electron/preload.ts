@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC } from '../src/shared/ipc';
 import type { SvlApi } from '../src/shared/ipc';
+import type { CameraLogEntry } from '../src/shared/types';
 
 // Expõe uma API tipada e restrita ao renderer (contextIsolation ativo).
 const api: SvlApi = {
@@ -91,6 +92,12 @@ const api: SvlApi = {
     storageUsage: () => ipcRenderer.invoke(IPC.storageUsage),
     runRetention: () => ipcRenderer.invoke(IPC.retentionRun),
     serverInfo: () => ipcRenderer.invoke(IPC.serverInfo),
+  },
+  cameraLogs: {
+    get: (cameraId?: string, limit?: number) =>
+      ipcRenderer.invoke(IPC.cameraLogsGet, cameraId, limit) as Promise<CameraLogEntry[]>,
+    clear: (cameraId?: string) =>
+      ipcRenderer.invoke(IPC.cameraLogsClear, cameraId) as Promise<void>,
   },
   events: {
     onCameraStatus: (cb) => {

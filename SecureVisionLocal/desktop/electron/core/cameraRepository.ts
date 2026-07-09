@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { getDb } from './db';
-import { encryptSecret, decryptSecret, isEncrypted } from './secrets';
+import { encryptSecret, decryptSecret, decryptSecretLegacy, isEncrypted, PREFIX_V1 } from './secrets';
 import type { Camera, CreateCameraDTO, CameraType } from '../../src/shared/types';
 
 // Linha do SQLite (inteiros para booleanos) → objeto de domínio.
@@ -41,7 +41,7 @@ function rowToCamera(r: CameraRow): Camera {
     manufacturer: r.manufacturer ?? undefined,
     username: r.username ?? undefined,
     password: decryptSecret(r.password) ?? undefined,
-    streamUrl: decryptSecret(r.streamUrl) ?? r.streamUrl,
+    streamUrl: decryptSecret(r.streamUrl) ?? '',
     subStreamUrl: decryptSecret(r.subStreamUrl) ?? undefined,
     onvifProfile: r.onvifProfile ?? undefined,
     onvifPort: r.onvifPort ?? undefined,
@@ -159,8 +159,8 @@ export function removeCamera(id: string): boolean {
   return info.changes > 0;
 }
 
-// Migração única na inicialização: cifra senhas/URLs que ainda estejam em texto puro
-// no banco (registros criados antes da criptografia em repouso existir).
+// Migração na inicialização: cifra campos que ainda estejam em texto puro e
+// re-cifra registros no formato DPAPI antigo (enc:v1:) para o novo formato AES (enc:v2:).
 export function migrateCameraSecrets(): void {
   const rows = getDb()
     .prepare('SELECT id, password, streamUrl, subStreamUrl FROM cameras')
@@ -169,16 +169,32 @@ export function migrateCameraSecrets(): void {
     'UPDATE cameras SET password=@password, streamUrl=@streamUrl, subStreamUrl=@subStreamUrl WHERE id=@id',
   );
   for (const row of rows) {
-    const needs =
-      (row.password && !isEncrypted(row.password)) ||
-      (row.streamUrl && !isEncrypted(row.streamUrl)) ||
-      (row.subStreamUrl && !isEncrypted(row.subStreamUrl));
-    if (!needs) continue;
+    const reEncrypt = (val: string | null): string | null => {
+      if (val === null || val === undefined || val === '') return val;
+      // enc:v1: é DPAPI antigo; re-cifra com AES se possível, ou limpa
+      if (val.startsWith('enc:v1:')) {
+        try {
+          return encryptSecret(decryptSecretLegacy(val));
+        } catch {
+          return null; // DPAPI de outra máquina → limpa o campo
+        }
+      }
+      if (isEncrypted(val)) return val;
+      return encryptSecret(val);
+    };
+    const newPassword = reEncrypt(row.password);
+    const newStreamUrl = reEncrypt(row.streamUrl);
+    const newSubStream = reEncrypt(row.subStreamUrl);
+    const changed =
+      newPassword !== row.password ||
+      newStreamUrl !== row.streamUrl ||
+      newSubStream !== row.subStreamUrl;
+    if (!changed) continue;
     update.run({
       id: row.id,
-      password: encryptSecret(row.password),
-      streamUrl: encryptSecret(row.streamUrl) ?? row.streamUrl,
-      subStreamUrl: encryptSecret(row.subStreamUrl),
+      password: newPassword,
+      streamUrl: newStreamUrl ?? row.streamUrl,
+      subStreamUrl: newSubStream,
     });
   }
 }

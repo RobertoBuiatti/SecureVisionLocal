@@ -127,8 +127,9 @@ export async function probeOnvifDevice(
 
 // Injeta usuário:senha numa URL RTSP que ainda não os tenha.
 export function injectCredentials(url: string, username?: string, password?: string): string {
-  if (!url || !username) return url;
+  if (!url) return url;
   if (url.includes('@')) return url; // já tem credenciais no formato user:pass@
   if (/[?&]password=|\/user=/i.test(url)) return url; // estilo Xiongmai (credenciais no caminho)
+  if (!username) return url; // sem usuário, mantém URL original
   return url.replace(/^rtsp:\/\//i, `rtsp://${encodeURIComponent(username)}:${encodeURIComponent(password ?? '')}@`);
 }

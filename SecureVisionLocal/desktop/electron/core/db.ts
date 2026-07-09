@@ -143,6 +143,20 @@ function migrate(database: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_det_snaps_camera ON detection_snapshots(cameraId);
     CREATE INDEX IF NOT EXISTS idx_det_snaps_time ON detection_snapshots(timestamp);
+
+    CREATE TABLE IF NOT EXISTS camera_logs (
+      id TEXT PRIMARY KEY,
+      cameraId TEXT NOT NULL,
+      cameraName TEXT DEFAULT '',
+      level TEXT NOT NULL DEFAULT 'error',
+      message TEXT NOT NULL,
+      details TEXT DEFAULT '',
+      timestamp INTEGER NOT NULL,
+      source TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_camera_logs_camera ON camera_logs(cameraId);
+    CREATE INDEX IF NOT EXISTS idx_camera_logs_time ON camera_logs(timestamp);
   `);
 
   addColumnIfMissing(database, 'cameras', 'onvifPort', 'INTEGER');

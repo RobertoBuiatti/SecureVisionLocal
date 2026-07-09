@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useStore } from '../store';
-import type { AppSettings, StorageUsage, ServerInfo } from '../shared/types';
+import type { AppSettings, StorageUsage, ServerInfo, CameraLogEntry } from '../shared/types';
 
 function gb(bytes: number): string {
   return `${(bytes / 1e9).toFixed(1)} GB`;
@@ -15,16 +15,39 @@ export function SettingsView() {
   const [recycling, setRecycling] = useState(false);
   const [recycleMsg, setRecycleMsg] = useState<string | null>(null);
   const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null);
+  const [cameraLogs, setCameraLogs] = useState<CameraLogEntry[]>([]);
+  const [logFilter, setLogFilter] = useState<string>('');
+  const [expandedLog, setExpandedLog] = useState<string | null>(null);
 
   useEffect(() => {
     if (!settings) loadSettings();
     else setDraft(settings);
   }, [settings, loadSettings]);
 
+  const loadLogs = useCallback(async (cameraId?: string) => {
+    try {
+      const logs = await window.svl.cameraLogs.get(cameraId, 100);
+      setCameraLogs(logs);
+    } catch {
+      /* ignora */
+    }
+  }, []);
+
   useEffect(() => {
     window.svl.system.storageUsage().then(setUsage);
     window.svl.system.serverInfo().then(setServerInfo);
-  }, []);
+    loadLogs();
+  }, [loadLogs]);
+
+  async function clearLogs() {
+    try {
+      await window.svl.cameraLogs.clear(logFilter || undefined);
+      setCameraLogs([]);
+      setExpandedLog(null);
+    } catch {
+      /* ignora */
+    }
+  }
 
   async function runRetention() {
     setRecycling(true);
@@ -255,6 +278,112 @@ export function SettingsView() {
           </>
         ) : (
           <p className="muted">Carregando…</p>
+        )}
+      </div>
+
+      <div className="storage-panel">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <h3 style={{ margin: 0 }}>Logs de Câmera</h3>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <select
+              value={logFilter}
+              onChange={(e) => {
+                setLogFilter(e.target.value);
+                loadLogs(e.target.value || undefined);
+              }}
+              style={{ fontSize: 12, padding: '4px 8px' }}
+            >
+              <option value="">Todas as câmeras</option>
+              {useStore.getState().cameras.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            <button
+              className="btn"
+              onClick={() => loadLogs(logFilter || undefined)}
+              style={{ fontSize: 12 }}
+            >
+              Atualizar
+            </button>
+            <button
+              className="btn"
+              onClick={clearLogs}
+              style={{ fontSize: 12, color: 'var(--danger)' }}
+            >
+              Limpar logs
+            </button>
+          </div>
+        </div>
+
+        {cameraLogs.length === 0 ? (
+          <p className="muted">Nenhum log registrado.</p>
+        ) : (
+          <div style={{ maxHeight: 400, overflowY: 'auto', fontSize: 12 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                  <th style={{ textAlign: 'left', padding: '4px 8px', whiteSpace: 'nowrap' }}>Data/Hora</th>
+                  <th style={{ textAlign: 'left', padding: '4px 8px', whiteSpace: 'nowrap' }}>Câmera</th>
+                  <th style={{ textAlign: 'left', padding: '4px 8px', whiteSpace: 'nowrap' }}>Nível</th>
+                  <th style={{ textAlign: 'left', padding: '4px 8px', whiteSpace: 'nowrap' }}>Mensagem</th>
+                  <th style={{ textAlign: 'left', padding: '4px 8px', whiteSpace: 'nowrap' }}>Origem</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cameraLogs.map((log) => {
+                  const isExpanded = expandedLog === log.id;
+                  const levelColor =
+                    log.level === 'error' ? 'var(--danger)' :
+                    log.level === 'warn' ? '#e6a817' : 'var(--text-muted)';
+                  return (
+                    <tr
+                      key={log.id}
+                      onClick={() => setExpandedLog(isExpanded ? null : log.id)}
+                      style={{
+                        borderBottom: '1px solid var(--border)',
+                        cursor: 'pointer',
+                        backgroundColor: isExpanded ? 'var(--hover)' : 'transparent',
+                      }}
+                    >
+                      <td style={{ padding: '4px 8px', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>
+                        {new Date(log.timestamp).toLocaleString('pt-BR')}
+                      </td>
+                      <td style={{ padding: '4px 8px', whiteSpace: 'nowrap' }}>{log.cameraName || log.cameraId}</td>
+                      <td style={{ padding: '4px 8px', whiteSpace: 'nowrap', color: levelColor, fontWeight: 'bold' }}>
+                        {log.level === 'error' ? 'ERRO' : log.level === 'warn' ? 'ATENÇÃO' : 'INFO'}
+                      </td>
+                      <td style={{ padding: '4px 8px', maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {log.message}
+                      </td>
+                      <td style={{ padding: '4px 8px', whiteSpace: 'nowrap', fontFamily: 'monospace' }}>
+                        {log.source}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {expandedLog && (
+          <div
+            style={{
+              marginTop: 8,
+              padding: 12,
+              backgroundColor: 'var(--surface)',
+              border: '1px solid var(--border)',
+              borderRadius: 4,
+              fontFamily: 'monospace',
+              fontSize: 12,
+              whiteSpace: 'pre-wrap',
+              maxHeight: 300,
+              overflowY: 'auto',
+              lineHeight: 1.5,
+            }}
+          >
+            {cameraLogs.find((l) => l.id === expandedLog)?.details || 'Sem detalhes adicionais.'}
+          </div>
         )}
       </div>
     </div>
