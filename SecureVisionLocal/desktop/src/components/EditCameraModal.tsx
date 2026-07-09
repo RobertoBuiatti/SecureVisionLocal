@@ -98,6 +98,17 @@ export function EditCameraModal({ camera, onClose }: EditCameraModalProps) {
     }
   }
 
+  function buildStreamUrl(): string {
+    let url = form.streamUrl;
+    if (form.username && !url.includes('@')) {
+      url = url.replace(
+        /^(rtsp|rtsps|rtmp|http|https):\/\//i,
+        `$1://${encodeURIComponent(form.username)}:${encodeURIComponent(form.password ?? '')}@`,
+      );
+    }
+    return url;
+  }
+
   async function handleSave() {
     setSaving(true);
     try {
@@ -107,7 +118,7 @@ export function EditCameraModal({ camera, onClose }: EditCameraModalProps) {
         port: form.port,
         username: form.username,
         password: form.password,
-        streamUrl: form.streamUrl,
+        streamUrl: buildStreamUrl(),
         subStreamUrl: form.subStreamUrl,
         onvifPort: form.onvifPort,
         hasPTZ: form.hasPTZ,

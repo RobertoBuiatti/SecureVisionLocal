@@ -12,6 +12,7 @@ import {
   findByFilePath,
   listRecordingInProgress,
 } from './recordingRepository';
+import { injectCredentials } from './onvifInfo';
 
 const SEGMENT_PREFIX = 'seg_';
 
@@ -52,9 +53,10 @@ export class ContinuousRecordingService {
     const segmentSeconds = Math.max(1, getSettings().continuousSegmentMinutes) * 60;
     const pattern = join(dir, `${SEGMENT_PREFIX}%Y%m%d_%H%M%S.mp4`);
 
+    const streamUrl = injectCredentials(camera.streamUrl, camera.username, camera.password);
     const args = [
       '-rtsp_transport', 'tcp',
-      '-i', camera.streamUrl,
+      '-i', streamUrl,
       // Áudio opcional ("0:a?"): câmera sem áudio grava só o vídeo, sem erro.
       '-map', '0:v:0',
       '-map', '0:a?',

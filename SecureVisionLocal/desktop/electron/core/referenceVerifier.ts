@@ -5,6 +5,7 @@ import { captureGrayFrame, captureGrayFrameMedian, ANALYSIS_SIZE, frameDistance 
 import { presetsSnapshotDir } from './snapshotService';
 import { controlPtz, continuousMoveVector } from './ptz';
 import type { Camera, ReferenceMark } from '../../src/shared/types';
+import { injectCredentials } from './onvifInfo';
 
 const SEARCH_RANGE = 24;
 const MATCH_THRESHOLD = 0.35;
@@ -120,7 +121,8 @@ export async function verifyWithReferences(camera: Camera, presetId: string): Pr
   }
 
   const side = ANALYSIS_SIZE;
-  const url = camera.subStreamUrl || camera.streamUrl;
+  const rawUrl = camera.subStreamUrl || camera.streamUrl;
+  const url = injectCredentials(rawUrl, camera.username, camera.password);
   const currentGray = await captureGrayFrameMedian(url, false, 3);
   if (!currentGray) {
     return { adjusted: false, dx: 0, dy: 0, confidence: 0, markResults: [] };

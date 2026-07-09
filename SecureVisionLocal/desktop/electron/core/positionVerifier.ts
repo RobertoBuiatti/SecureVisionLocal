@@ -16,6 +16,7 @@ import {
 import { getSettings } from './settings';
 import { tourRunner } from './tourRunner';
 import { aiVerifyPosition, computeAndSaveReferenceEmbedding } from './ai/aiVerifier';
+import { injectCredentials } from './onvifInfo';
 
 // Distância (0..100, menor = mais parecido) acima disso = posição provavelmente errada.
 // Usa correlação normalizada (frameDistance), robusta a brilho — por isso o limiar é baixo.
@@ -162,7 +163,8 @@ class PositionVerifier {
     if (resumeTourId) tourRunner.stop(camera.id);
 
     const results: PositionCheckResult[] = [];
-    const url = camera.subStreamUrl || camera.streamUrl;
+    const rawUrl = camera.subStreamUrl || camera.streamUrl;
+    const url = injectCredentials(rawUrl, camera.username, camera.password);
 
     try {
       for (const preset of presets) {

@@ -3,6 +3,7 @@ import { WebSocketServer } from 'ws';
 import { FFMPEG_PATH } from './ffmpegPath';
 import { hwaccelArgs } from './hwaccel';
 import { isSafeStreamUrl } from './urlGuard';
+import { injectCredentials } from './onvifInfo';
 import type { Camera, StreamInfo } from '../../src/shared/types';
 
 const RECONNECT_DELAY_MS = 3000;
@@ -121,8 +122,9 @@ export class StreamingService {
     if (state.stopping || !state.camera) return;
     state.lastDataAt = Date.now(); // dá ao novo processo uma janela cheia antes do watchdog agir
     const camera = state.camera;
-    const url =
+    const rawUrl =
       state.quality === 'low' && camera.subStreamUrl ? camera.subStreamUrl : camera.streamUrl;
+    const url = injectCredentials(rawUrl, camera.username, camera.password);
     if (!isSafeStreamUrl(url)) {
       this.notifier?.({
         cameraId: state.cameraId,

@@ -4,6 +4,7 @@ import { mkdirSync, existsSync } from 'node:fs';
 import { FFMPEG_PATH } from './ffmpegPath';
 import type { Camera } from '../../src/shared/types';
 import { getThumbnailsDir } from './paths';
+import { injectCredentials } from './onvifInfo';
 
 // Resolução (quadrado, cinza) em que os quadros são analisados. Maior que o necessário
 // para a comparação da imagem inteira, de propósito: dá detalhe suficiente para os
@@ -21,7 +22,8 @@ export function presetsSnapshotDir(): string {
 // Tenta até 3 vezes com intervalo de 500ms entre tentativas, porque a
 // câmera pode estar momentaneamente ocupada (ex.: após salvar um preset).
 export async function captureJpeg(camera: Camera, outPath: string): Promise<boolean> {
-  const urls = [camera.subStreamUrl, camera.streamUrl].filter(Boolean) as string[];
+  const rawUrls = [camera.subStreamUrl, camera.streamUrl].filter(Boolean) as string[];
+  const urls = rawUrls.map((u) => injectCredentials(u, camera.username, camera.password));
   for (const url of urls) {
     for (let attempt = 0; attempt < 3; attempt++) {
       const ok = await snapOne(url, outPath);

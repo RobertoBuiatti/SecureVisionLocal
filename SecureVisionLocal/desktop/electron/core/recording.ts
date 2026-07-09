@@ -8,6 +8,7 @@ import type { Camera, DetectionType, Recording } from '../../src/shared/types';
 import { getSettings } from './settings';
 import { insertRecording, finalizeRecording } from './recordingRepository';
 import { overlayDetections } from './markRecording';
+import { injectCredentials } from './onvifInfo';
 
 interface ActiveRecording {
   recording: Recording;
@@ -69,9 +70,10 @@ export class RecordingService {
       hasMotion: detectionType === 'motion',
     };
 
+    const streamUrl = injectCredentials(camera.streamUrl, camera.username, camera.password);
     const args = [
       '-rtsp_transport', 'tcp',
-      '-i', camera.streamUrl,
+      '-i', streamUrl,
       // Mapeamento explícito com áudio OPCIONAL ("0:a?"): câmeras sem faixa de áudio
       // não derrubam mais o FFmpeg — ele grava só o vídeo.
       '-map', '0:v:0',

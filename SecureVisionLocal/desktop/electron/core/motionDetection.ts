@@ -5,6 +5,7 @@ import { insertDetectionEvent, newEventId } from './detectionRepository';
 import { recordingService } from './recording';
 import { captureDetectionSnapshot } from './ai/detectionSnapshotCapture';
 import { getSettings } from './settings';
+import { injectCredentials } from './onvifInfo';
 
 const W = 320;
 const H = 180;
@@ -45,7 +46,8 @@ export class MotionDetectionService {
 
   start(camera: Camera, config: DetectionConfig): void {
     if (this.active.has(camera.id)) return;
-    const url = camera.subStreamUrl || camera.streamUrl;
+    const rawUrl = camera.subStreamUrl || camera.streamUrl;
+    const url = injectCredentials(rawUrl, camera.username, camera.password);
     const args = [
       '-rtsp_transport', 'tcp',
       '-i', url,

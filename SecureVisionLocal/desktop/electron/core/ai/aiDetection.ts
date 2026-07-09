@@ -31,6 +31,7 @@ import { continuousMoveVector, controlPtz } from '../ptz';
 import { tourRunner } from '../tourRunner';
 import { getTour } from '../ptzRepository';
 import { getSettings } from '../settings';
+import { injectCredentials } from '../onvifInfo';
 import { ensureModel, isModelReady, resolveModelPath, type ModelKey } from './modelManager';
 import { preprocess, decode, nms, cocoToCategory, YOLO_INPUT, type Detection } from './yolo';
 import { captureDetectionSnapshot } from './detectionSnapshotCapture';
@@ -103,7 +104,8 @@ export class AiDetectionService {
 
   start(camera: Camera, config: DetectionConfig): void {
     if (this.active.has(camera.id)) return;
-    const url = camera.subStreamUrl || camera.streamUrl;
+    const rawUrl = camera.subStreamUrl || camera.streamUrl;
+    const url = injectCredentials(rawUrl, camera.username, camera.password);
     const args = [
       '-rtsp_transport', 'tcp',
       '-i', url,

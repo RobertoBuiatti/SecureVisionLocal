@@ -66,9 +66,17 @@ export function AddCameraModal({ prefill, onClose }: AddCameraModalProps) {
 
   // Monta a URL RTSP com credenciais se o usuário não informou uma URL completa.
   function buildStreamUrl(): string {
-    if (form.streamUrl) return form.streamUrl;
-    const auth = form.username ? `${form.username}:${form.password ?? ''}@` : '';
-    return `rtsp://${auth}${form.ip}:${form.port}/`;
+    if (!form.streamUrl) {
+      const auth = form.username ? `${form.username}:${form.password ?? ''}@` : '';
+      return `rtsp://${auth}${form.ip}:${form.port}/`;
+    }
+    if (form.username && !form.streamUrl.includes('@')) {
+      return form.streamUrl.replace(
+        /^(rtsp|rtsps|rtmp|http|https):\/\//i,
+        `$1://${encodeURIComponent(form.username)}:${encodeURIComponent(form.password ?? '')}@`,
+      );
+    }
+    return form.streamUrl;
   }
 
   async function handleSave() {
