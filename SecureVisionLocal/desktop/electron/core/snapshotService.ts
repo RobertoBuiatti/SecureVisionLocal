@@ -23,11 +23,17 @@ export function presetsSnapshotDir(): string {
 // Captura um único quadro JPEG da câmera para o caminho indicado.
 // Tenta até 3 vezes com intervalo de 500ms entre tentativas, porque a
 // câmera pode estar momentaneamente ocupada (ex.: após salvar um preset).
-export async function captureJpeg(camera: Camera, outPath: string): Promise<boolean> {
-  const rawUrls = [camera.subStreamUrl, camera.streamUrl].filter(Boolean) as string[];
+export async function captureJpeg(camera: Camera, outPath: string, preferHighQuality = false): Promise<boolean> {
+  const primaryUrl = preferHighQuality ? camera.streamUrl : camera.subStreamUrl;
+  const fallbackUrl = preferHighQuality ? camera.subStreamUrl : camera.streamUrl;
+  const rawUrls = [primaryUrl, fallbackUrl].filter(Boolean) as string[];
   const urls = rawUrls.map((u) => injectCredentials(u, camera.username, camera.password));
-  for (const url of urls) {
-    for (let attempt = 0; attempt < 3; attempt++) {
+  
+  for (let urlIndex = 0; urlIndex < urls.length; urlIndex++) {
+    const url = urls[urlIndex];
+    // Na URL principal tenta 1x; na fallback tenta 3x
+    const maxAttempts = urlIndex === 0 ? 1 : 3;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const ok = await snapOne(url, outPath);
       if (ok) {
         let fileSize = 0;
@@ -37,12 +43,12 @@ export async function captureJpeg(camera: Camera, outPath: string): Promise<bool
           camera.name,
           'info',
           `Snapshot de "${camera.name}" capturado (${Math.round(fileSize / 1024)}KB)`,
-          `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nArquivo: ${outPath}\nTamanho: ${Math.round(fileSize / 1024)}KB\nTentativa: ${attempt + 1} de 3\nURL usada: ${url.replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}`,
+          `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nArquivo: ${outPath}\nTamanho: ${Math.round(fileSize / 1024)}KB\nURL: ${url.replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nTentativa: ${attempt + 1}/${maxAttempts}`,
           'snapshot',
         );
         return true;
       }
-      if (attempt < 2) await new Promise((r) => setTimeout(r, 500));
+      if (attempt < maxAttempts - 1) await new Promise((r) => setTimeout(r, 500));
     }
   }
   insertCameraLog(
@@ -50,7 +56,7 @@ export async function captureJpeg(camera: Camera, outPath: string): Promise<bool
     camera.name,
     'error',
     `Falha ao capturar snapshot de "${camera.name}" após múltiplas tentativas`,
-    `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nUsuário: ${camera.username || '—'}\nURL principal: ${(camera.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nURL secundária: ${(camera.subStreamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nCaminho de saída: ${outPath}\n\nForam feitas 3 tentativas em cada URL disponível. O FFmpeg retornou código de erro em todas. Verifique se a câmera está acessível e a URL de stream está correta.`,
+    `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nUsuário: ${camera.username || '—'}\nURL principal: ${(camera.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nURL secundária: ${(camera.subStreamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nCaminho de saída: ${outPath}\n\nTentou main stream 1x, sub-stream 3x. O FFmpeg retornou código de erro em todas. Verifique se a câmera está acessível e a URL de stream está correta.`,
     'snapshot',
   );
   return false;

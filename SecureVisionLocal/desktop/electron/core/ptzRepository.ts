@@ -54,17 +54,18 @@ export function setPresetCheck(id: string, ok: boolean, score: number): void {
     .run(Date.now(), ok ? 1 : 0, Math.round(score), id);
 }
 
-export function addPreset(cameraId: string, name: string, token: string): PTZPreset {
+export function addPreset(cameraId: string, name: string, token: string, snapshotPath?: string): PTZPreset {
   const preset: PTZPreset = {
     id: `pre_${randomUUID().slice(0, 8)}`,
     cameraId,
     name,
     token,
     createdAt: Date.now(),
+    snapshotPath,
   };
   getDb()
     .prepare(
-      'INSERT INTO ptz_presets (id, cameraId, name, token, createdAt) VALUES (@id, @cameraId, @name, @token, @createdAt)',
+      'INSERT INTO ptz_presets (id, cameraId, name, token, createdAt, snapshotPath) VALUES (@id, @cameraId, @name, @token, @createdAt, @snapshotPath)',
     )
     .run(preset);
   return preset;

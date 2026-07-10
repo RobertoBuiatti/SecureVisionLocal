@@ -50,7 +50,7 @@ import { readFile, copyFile } from 'node:fs/promises';
 import { listSchedules, upsertSchedule, deleteSchedule } from '../core/scheduleRepository';
 import { testConnection } from '../core/connection';
 import { getSettings, updateSettings } from '../core/settings';
-import { listCameraLogs, clearCameraLogs } from '../core/cameraLogger';
+import { listCameraLogs, clearCameraLogs, insertCameraLog } from '../core/cameraLogger';
 import { applyStartWithWindows } from '../core/autostart';
 import { getSystemStatus } from '../core/system';
 import { recordingManager } from '../core/recordingManager';
@@ -209,7 +209,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
       filters: [{ name: 'Imagem JPEG', extensions: ['jpg'] }],
     });
     if (!dest) return { saved: false };
-    const ok = await captureJpeg(camera, dest);
+    const ok = await captureJpeg(camera, dest, true); // snapshot manual: prioriza alta qualidade
     return ok ? { saved: true, path: dest } : { saved: false };
   });
 
@@ -236,20 +236,35 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     if (!camera) return null;
     const token = await savePresetOnvif(camera, name);
     if (!token) return null;
-    const preset = addPreset(cameraId, name, token);
     // Pequena espera para a câmera terminar de mover-se à posição salva
     // antes de capturar o snapshot de referência (evita frame borrado / falha).
     await new Promise((r) => setTimeout(r, 1500));
-    // Captura a imagem de referência da posição (a câmera já está nela).
-    const snapPath = join(presetsSnapshotDir(), `${preset.id}.jpg`);
-    const ok = await captureJpeg(camera, snapPath);
-    if (ok) {
-      setPresetSnapshot(preset.id, snapPath);
-      preset.snapshotPath = snapPath;
-      // Embedding AI de referência (best-effort)
-      const aiUrl = camera.subStreamUrl || camera.streamUrl;
-      computeAndSaveReferenceEmbedding(aiUrl, preset.id).catch(() => {});
+    // Tenta capturar snapshot para referência visual.
+    // Se falhar, AINDA SALVA O PRESET (só fica sem imagem de referência).
+    const snapPath = join(presetsSnapshotDir(), `${Date.now()}_${name}.jpg`);
+    let captured = false;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const ok = await captureJpeg(camera, snapPath, true);
+      if (ok) {
+        captured = true;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 500));
     }
+    if (!captured) {
+      insertCameraLog(
+        cameraId,
+        camera.name,
+        'warn',
+        `Preset "${name}" salvo SEM snapshot de referência`,
+        `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nTentou capturar snapshot 3x (priorizando stream principal) e falhou. O preset foi salvo, mas sem imagem de referência. Pode recapturar depois via "Atualizar posição".`,
+        'ptz',
+      );
+    }
+    const preset = addPreset(cameraId, name, token, captured ? snapPath : undefined);
+    // Embedding AI de referência (best-effort)
+    const aiUrl = camera.subStreamUrl || camera.streamUrl;
+    computeAndSaveReferenceEmbedding(aiUrl, preset.id).catch(() => {});
     return preset;
   });
   ipcMain.handle(IPC.ptzListPresets, (_e, cameraId: string) => listPresets(cameraId));
@@ -267,7 +282,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     if (!ok) return null;
     // Re-captura o snapshot de referência da posição atual.
     const snapPath = join(presetsSnapshotDir(), `${preset.id}.jpg`);
-    const captured = await captureJpeg(camera, snapPath);
+    const captured = await captureJpeg(camera, snapPath, true); // preset: prioriza stream principal
     if (captured) {
       setPresetSnapshot(preset.id, snapPath);
       preset.snapshotPath = snapPath;

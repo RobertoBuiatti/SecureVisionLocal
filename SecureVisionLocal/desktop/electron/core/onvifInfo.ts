@@ -129,7 +129,9 @@ export async function probeOnvifDevice(
 export function injectCredentials(url: string, username?: string, password?: string): string {
   if (!url) return url;
   if (url.includes('@')) return url; // já tem credenciais no formato user:pass@
-  if (/[?&]password=|\/user=/i.test(url)) return url; // estilo Xiongmai (credenciais no caminho)
+  // Xiongmai e clones: credenciais no query/path como user=..._password=... ou user=...&password=...
+  // Detecta: ?password=, &password=, ?user=..._password=, &user=..._password=, /user=..._password=, /user=
+  if (/[?&]password=|[?&/]user=[^&]*_password=|\/user=/i.test(url)) return url;
   if (!username) return url; // sem usuário, mantém URL original
   return url.replace(/^rtsp:\/\//i, `rtsp://${encodeURIComponent(username)}:${encodeURIComponent(password ?? '')}@`);
 }
