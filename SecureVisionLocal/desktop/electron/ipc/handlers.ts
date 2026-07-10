@@ -136,10 +136,11 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   );
 
   // ---- Streaming ----
-  ipcMain.handle(IPC.streamStart, (_e, cameraId: string, quality?: 'low' | 'high') => {
+  ipcMain.handle(IPC.streamStart, (_e, cameraId: string) => {
     const camera = getCamera(cameraId);
     if (!camera) throw new Error('Câmera não encontrada');
-    return streamingService.start(camera, quality);
+    // Sempre tenta alta qualidade primeiro; failover automático para low se cair
+    return streamingService.start(camera, 'high');
   });
   ipcMain.handle(IPC.streamStop, (_e, cameraId: string) => streamingService.stop(cameraId));
 
@@ -236,6 +237,9 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     const token = await savePresetOnvif(camera, name);
     if (!token) return null;
     const preset = addPreset(cameraId, name, token);
+    // Pequena espera para a câmera terminar de mover-se à posição salva
+    // antes de capturar o snapshot de referência (evita frame borrado / falha).
+    await new Promise((r) => setTimeout(r, 1500));
     // Captura a imagem de referência da posição (a câmera já está nela).
     const snapPath = join(presetsSnapshotDir(), `${preset.id}.jpg`);
     const ok = await captureJpeg(camera, snapPath);

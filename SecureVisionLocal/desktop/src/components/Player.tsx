@@ -1,13 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import JSMpeg, { Player as JSMpegPlayer } from '@cycjimmy/jsmpeg-player';
 
-interface PlayerProps {
-  cameraId: string;
-  quality?: 'low' | 'high';
-}
-
 // Inicia o stream no núcleo (FFmpeg → WebSocket) e renderiza com jsmpeg no canvas.
-export function Player({ cameraId, quality = 'low' }: PlayerProps) {
+// Failover high→low é automático no backend; o frontend não escolhe qualidade.
+export function Player({ cameraId }: { cameraId: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const playerRef = useRef<JSMpegPlayer | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -30,7 +26,7 @@ export function Player({ cameraId, quality = 'low' }: PlayerProps) {
 
     async function startStream() {
       try {
-        const info = await window.svl.streaming.start(cameraId, quality);
+        const info = await window.svl.streaming.start(cameraId, 'high');
         if (cancelled || !canvasRef.current) return;
         // Stream já estava ativo (mantido entre telas) → conecta direto.
         if (info.status === 'running') setConnecting(false);
@@ -64,7 +60,7 @@ export function Player({ cameraId, quality = 'low' }: PlayerProps) {
       }
       playerRef.current = null;
     };
-  }, [cameraId, quality]);
+  }, [cameraId]);
 
   return (
     <div className="player">

@@ -25,7 +25,7 @@ const api: SvlApi = {
       ipcRenderer.invoke(IPC.onvifProbe, ip, username, password),
   },
   streaming: {
-    start: (cameraId, quality) => ipcRenderer.invoke(IPC.streamStart, cameraId, quality),
+    start: (cameraId) => ipcRenderer.invoke(IPC.streamStart, cameraId),
     stop: (cameraId) => ipcRenderer.invoke(IPC.streamStop, cameraId),
   },
   recording: {

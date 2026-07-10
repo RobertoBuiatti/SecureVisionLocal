@@ -13,8 +13,13 @@ const RECONNECT_DELAY_MS = 3000;
 const WS_HOST = '127.0.0.1';
 const WS_PORT_MIN = 9100;
 const WS_PORT_MAX = 9400;
-const STALL_TIMEOUT_MS = 8000; // sem novos quadros por mais que isto = travado → reinicia
+// Timeouts de stall (travamento) por qualidade. High mais tolerante p/ evitar failover prematuro.
+const STALL_TIMEOUT_MS = { high: 15000, low: 25000 };
 const WATCHDOG_INTERVAL_MS = 3000; // frequência de checagem do travamento
+const MAX_STALLS_BEFORE_FAILOVER = 3; // quantos stalls consecutivos em high antes de cair p/ low
+const MIN_TIME_IN_LOW_MS = 60_000; // fica no low pelo menos 60s antes de tentar voltar
+const PROBE_STABLE_MS = 10_000; // probe no high deve ficar estável 10s antes de confirmar troca
+const PROBE_RETRY_BASE_MS = 30_000; // base para backoff exponencial se probe falhar
 
 // Caminhos RTSP alternativos para câmeras cujo ONVIF retorna URL genérica (apenas "/").
 // Muitas marcas (Xiongmai, Hikvision, Intelbras/Dahua, TP-Link, Reolink, Foscam,
@@ -123,13 +128,21 @@ interface ActiveStream {
   gotData: boolean;
   stopping: boolean;
   camera?: Camera; // presente em streams de câmera (não em reprodução de arquivo)
-  quality?: 'low' | 'high';
+  quality: 'low' | 'high'; // qualidade ATUAL rodando
+  preferredQuality: 'low' | 'high'; // qualidade PREFERIDA pelo usuário
   isFile?: boolean;
   reconnectTimer?: ReturnType<typeof setTimeout>;
+  failoverTimer?: ReturnType<typeof setTimeout>; // timer para tentar voltar à qualidade preferida
+  failoverActive: boolean; // true se fez failover high→low e está aguardando voltar
   lastDataAt: number; // instante do último quadro recebido (para o watchdog de travamento)
   watchdog?: ReturnType<typeof setInterval>;
   urlCandidates: string[]; // URLs a tentar (fallback paths)
   urlAttempt: number; // índice atual em urlCandidates
+  stallCount: number; // stalls consecutivos na qualidade atual (reset ao trocar qualidade)
+  // Probe de estabilidade para voltar ao high
+  probeTimer?: ReturnType<typeof setTimeout>;
+  probeAttempt: number; // tentativa de probe (para backoff exponencial)
+  lowSince?: number; // timestamp quando entrou em low
 }
 
 export type StreamStatusEvent = {
@@ -158,6 +171,15 @@ export class StreamingService {
     const existing = this.streams.get(camera.id);
     if (existing) {
       existing.camera = camera; // atualiza dados (URL/credenciais) se mudaram
+      existing.preferredQuality = quality; // atualiza qualidade preferida
+      // Se estava em failover e a preferida agora é a que está rodando, cancela failover
+      if (existing.failoverActive && existing.quality === quality) {
+        existing.failoverActive = false;
+        if (existing.failoverTimer) {
+          clearTimeout(existing.failoverTimer);
+          existing.failoverTimer = undefined;
+        }
+      }
       return {
         cameraId: camera.id,
         wsPort: existing.wsPort,
@@ -176,9 +198,13 @@ export class StreamingService {
       stopping: false,
       camera,
       quality,
+      stallCount: 0,
+      probeAttempt: 0,
       lastDataAt: Date.now(),
       urlCandidates: this.buildUrlCandidates(camera, quality),
       urlAttempt: 0,
+      preferredQuality: quality,
+      failoverActive: false,
     };
     this.streams.set(camera.id, state);
     this.spawnCameraFfmpeg(state);
@@ -188,16 +214,19 @@ export class StreamingService {
 
   private startWatchdog(state: ActiveStream): void {
     if (state.watchdog) return;
+    const quality = state.quality; // agora obrigatório
+    const timeout = STALL_TIMEOUT_MS[quality];
     state.watchdog = setInterval(() => {
       if (state.stopping || !state.ffmpeg || state.reconnectTimer) return;
-      if (Date.now() - state.lastDataAt > STALL_TIMEOUT_MS) {
+      if (Date.now() - state.lastDataAt > timeout) {
         const camera = state.camera;
         const name = camera?.name || state.cameraId;
+        const secs = Math.round(timeout / 1000);
         insertCameraLog(
           state.cameraId,
           name,
           'error',
-          `Stream travado — "${name}" parou de enviar quadros por mais de 8s`,
+          `Stream travado — "${name}" parou de enviar quadros por mais de ${secs}s`,
           `Câmera: ${name}\nIP: ${camera?.ip || '—'}:${camera?.port || '—'}\nUsuário: ${camera?.username || '—'}\nURL: ${(camera?.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\nO processo FFmpeg continua vivo mas não produz dados. Causa típica: congelamento do stream RTSP (hiccup). Reiniciando o FFmpeg forçadamente.`,
           'streaming',
         );
@@ -225,6 +254,7 @@ export class StreamingService {
       }
     }
     state.gotData = false;
+    state.stallCount = (state.stallCount || 0) + 1; // conta stalls consecutivos
     this.spawnCameraFfmpeg(state); // reinicia já (sem esperar o backoff)
   }
 
@@ -237,13 +267,15 @@ export class StreamingService {
     const candidates = [baseUrl];
     try {
       const u = new URL(baseUrl.replace(/^rtsp:\/\//i, 'http://'));
-      const path = u.pathname + u.search;
-      // Se o path é vazio ou só "/", a URL retornada pelo ONVIF é genérica.
-      // Adiciona fallbacks comuns mantendo host, porta e credenciais.
-      if (!path || path === '/') {
-        const prefix = baseUrl.replace(/\/?(\?.*)?$/, '');
+      // Xiongmai e clones usam credenciais no path/query (user=...&password=...).
+      // Fallbacks padrão (rtsp://host:port/path) não funcionam sem esse formato proprietário.
+      const looksLikeXiongmai = /user\s*=\s*[^&]+.*password\s*=\s*[^&]+/i.test(u.pathname + u.search);
+      if (!looksLikeXiongmai) {
+        const origin = u.origin; // ex: http://192.168.1.9:554
+        const rtspOrigin = origin.replace(/^http:\/\//i, 'rtsp://');
         for (const fp of RTSP_FALLBACK_PATHS) {
-          candidates.push(`${prefix}${fp}`);
+          const candidate = `${rtspOrigin}${fp}`;
+          if (candidate !== baseUrl) candidates.push(candidate);
         }
       }
     } catch {
@@ -274,14 +306,19 @@ export class StreamingService {
       });
       return;
     }
-    const scale = state.quality === 'high' ? '1280:-1' : '640:-1';
+    const scale = '1280:-1';
     const bitrate = state.quality === 'high' ? '2500k' : '1000k';
+    const isLow = state.quality === 'low';
 
     const args = [
       ...hwaccelArgs(),
       '-rtsp_transport', 'tcp',
-      '-fflags', 'nobuffer',
+      '-fflags', isLow ? 'nobuffer+igndts+discardcorrupt' : 'nobuffer',
       '-flags', 'low_delay',
+      '-analyzeduration', isLow ? '1000000' : '5000000',
+      '-probesize', isLow ? '500000' : '5000000',
+      '-max_delay', isLow ? '500000' : '5000000',
+      '-reorder_queue_size', isLow ? '0' : '1000',
       '-i', url,
       '-f', 'mpegts',
       '-codec:v', 'mpeg1video',
@@ -353,6 +390,7 @@ export class StreamingService {
       state.lastDataAt = Date.now(); // alimenta o watchdog (chegou quadro novo)
       if (!state.gotData) {
         state.gotData = true;
+        state.stallCount = 0; // reset stall count ao conectar com sucesso
         const camera = state.camera;
         const name = camera?.name || state.cameraId;
         insertCameraLog(
@@ -375,7 +413,167 @@ export class StreamingService {
       state.gotData = false;
       const camera = state.camera;
       const name = camera?.name || state.cameraId;
+
+      // Failover automático high → low (só após N stalls consecutivos)
+      const attemptFailoverToLow = () => {
+        if (!camera?.subStreamUrl) return false;
+        if (state.quality === 'low') return false; // já está em low
+        if (state.failoverActive) return false; // já tentou failover
+        const stalls = state.stallCount || 0;
+        if (stalls < MAX_STALLS_BEFORE_FAILOVER) return false; // não atingiu threshold
+        const nextQuality: 'low' = 'low';
+        state.failoverActive = true;
+        state.quality = nextQuality;
+        state.lowSince = Date.now(); // marca quando entrou em low
+        state.probeAttempt = 0; // reset tentativas de probe
+        state.stallCount = 0; // reset ao trocar qualidade
+        state.urlCandidates = this.buildUrlCandidates(camera, nextQuality);
+        state.urlAttempt = 0;
+        insertCameraLog(
+          state.cameraId,
+          name,
+          'warn',
+          `Failover automático: "${name}" caindo para qualidade baixa (sub-stream)`,
+          `Câmera: ${name}\nIP: ${camera.ip}:${camera.port}\nQualidade preferida: ${state.preferredQuality}\nNova qualidade: ${nextQuality}\nStalls consecutivos: ${stalls}\nURL sub-stream: ${(camera.subStreamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\nO stream de alta qualidade travou ${stalls}x. Tentando o sub-stream como fallback.`,
+          'streaming',
+        );
+        this.notifier?.({ cameraId: state.cameraId, status: 'error', error: 'Alta qualidade indisponível. Tentando baixa…' });
+        this.spawnCameraFfmpeg(state);
+        return true;
+      };
+
+      // Probe de estabilidade para voltar ao high: inicia FFmpeg "espião" no high,
+      // só troca o stream principal se ficar estável por PROBE_STABLE_MS.
+      const scheduleProbeToHigh = () => {
+        if (state.preferredQuality !== 'high' || state.quality !== 'low' || state.probeTimer) return;
+        const timeInLow = state.lowSince ? Date.now() - state.lowSince : 0;
+        if (timeInLow < MIN_TIME_IN_LOW_MS) {
+          // Ainda não passou tempo mínimo em low, agenda para depois
+          const waitMs = MIN_TIME_IN_LOW_MS - timeInLow;
+          state.probeTimer = setTimeout(() => {
+            state.probeTimer = undefined;
+            scheduleProbeToHigh();
+          }, waitMs);
+          return;
+        }
+        // Inicia probe
+        startProbeToHigh(state);
+      };
+
+      const startProbeToHigh = (st: ActiveStream) => {
+        const cam = st.camera;
+        if (!cam || st.stopping || st.quality !== 'low') return;
+        const probeUrl = this.buildUrlCandidates(cam, 'high')[0];
+        if (!probeUrl || !isSafeStreamUrl(probeUrl)) {
+          scheduleProbeRetry(st);
+          return;
+        }
+        insertCameraLog(
+          st.cameraId,
+          name,
+          'info',
+          `Probe de estabilidade: testando alta qualidade para "${name}"`,
+          `Câmera: ${name}\nIP: ${cam.ip}:${cam.port}\nTentativa probe: ${st.probeAttempt + 1}\nURL teste: ${probeUrl.replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\nVerificando se stream principal está estável antes de trocar.`,
+          'streaming',
+        );
+
+        const probeArgs = [
+          ...hwaccelArgs(),
+          '-rtsp_transport', 'tcp',
+          '-fflags', 'nobuffer',
+          '-flags', 'low_delay',
+          '-analyzeduration', '1000000',
+          '-probesize', '500000',
+          '-i', probeUrl,
+          '-f', 'null',
+          '-',
+        ];
+const probe = spawn(FFMPEG_PATH, probeArgs, { stdio: ['ignore', 'ignore', 'pipe'] });
+        const probeStdout = probe.stdout as NodeJS.ReadableStream | null;
+        let probeStableSince = 0;
+        let probeFailed = false;
+
+        const onProbeData = () => {
+          if (probeStableSince === 0) probeStableSince = Date.now();
+        };
+        probeStdout?.on('data', onProbeData);
+
+        const cleanupProbe = () => {
+          probeStdout?.off('data', onProbeData);
+          probe.removeAllListeners('close');
+          probe.removeAllListeners('error');
+          try { probe.kill('SIGKILL'); } catch {}
+        };
+
+        const checkProbeStable = () => {
+          if (st.stopping || st.quality !== 'low') {
+            cleanupProbe();
+            return;
+          }
+          const now = Date.now();
+          if (probeStableSince > 0 && now - probeStableSince >= PROBE_STABLE_MS) {
+            // Probe estável por 10s — confirma troca para high
+            cleanupProbe();
+            insertCameraLog(
+              st.cameraId,
+              name,
+              'info',
+              `Probe estável: restaurando alta qualidade para "${name}"`,
+              `Câmera: ${name}\nIP: ${cam.ip}:${cam.port}\nProbe ficou estável por ${PROBE_STABLE_MS / 1000}s. Trocando stream principal.`,
+              'streaming',
+            );
+            st.quality = 'high';
+            st.failoverActive = false;
+            st.lowSince = undefined;
+            st.probeAttempt = 0;
+            st.stallCount = 0;
+            st.urlCandidates = this.buildUrlCandidates(cam, 'high');
+            st.urlAttempt = 0;
+            this.spawnCameraFfmpeg(st);
+            return;
+          }
+          if (!probeFailed) {
+            st.probeTimer = setTimeout(checkProbeStable, 1000);
+          }
+        };
+        checkProbeStable();
+
+        probe.on('error', () => {
+          if (!probeFailed) {
+            probeFailed = true;
+            cleanupProbe();
+            scheduleProbeRetry(st);
+          }
+        });
+        probe.on('close', () => {
+          if (!probeFailed) {
+            probeFailed = true;
+            cleanupProbe();
+            scheduleProbeRetry(st);
+          }
+        });
+      };
+
+      const scheduleProbeRetry = (st: ActiveStream) => {
+        if (st.stopping || st.quality !== 'low') return;
+        st.probeAttempt = (st.probeAttempt || 0) + 1;
+        const backoff = PROBE_RETRY_BASE_MS * Math.min(2 ** (st.probeAttempt - 1), 8); // 30s, 60s, 120s... max 128x
+        insertCameraLog(
+          st.cameraId,
+          name,
+          'info',
+          `Probe falhou, nova tentativa em ${Math.round(backoff / 1000)}s ("${name}")`,
+          `Câmera: ${name}\nIP: ${st.camera?.ip || '—'}:${st.camera?.port || '—'}\nTentativa probe: ${st.probeAttempt}\nBackoff: ${Math.round(backoff / 1000)}s`,
+          'streaming',
+        );
+        st.probeTimer = setTimeout(() => {
+          st.probeTimer = undefined;
+          startProbeToHigh(st);
+        }, backoff);
+      };
+
       if (neverConnected) {
+        // Nunca conectou: tenta próxima URL na lista de fallbacks
         const nextAttempt = state.urlAttempt + 1;
         const hasMoreUrls = nextAttempt < state.urlCandidates.length;
         const ffmpegError = stderrBuf ? `\n\n--- stderr FFmpeg ---\n${stderrBuf.trim().slice(0, 2000)}` : '';
@@ -387,7 +585,6 @@ export class StreamingService {
           `Câmera: ${name}\nIP: ${camera?.ip || '—'}:${camera?.port || '—'}\nUsuário: ${camera?.username || '—'}\nURL principal: ${(camera?.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nURL secundária: ${(camera?.subStreamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\nURL testada: ${state.urlCandidates[state.urlAttempt].replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nTentativas restantes: ${hasMoreUrls ? state.urlCandidates.length - nextAttempt : 0}\n\nCausa provável: URL incorreta, credenciais inválidas ou câmera desligada/inacessível na rede. O FFmpeg nunca conseguiu receber quadros.${ffmpegError}`,
           'streaming',
         );
-        // Se há mais URLs para tentar, avança para a próxima imediatamente
         if (hasMoreUrls) {
           state.urlAttempt = nextAttempt;
           state.reconnectTimer = setTimeout(() => {
@@ -396,16 +593,22 @@ export class StreamingService {
           }, 500);
           return;
         }
+        // Acabaram URLs da qualidade atual. Se estava em high e tem sub-stream, tenta failover.
+        if (state.quality === 'high' && attemptFailoverToLow()) return;
       } else {
+        // Estava conectado e caiu
         insertCameraLog(
           state.cameraId,
           name,
           'warn',
           `Conexão perdida com "${name}"`,
-          `Câmera: ${name}\nIP: ${camera?.ip || '—'}:${camera?.port || '—'}\nUsuário: ${camera?.username || '—'}\nURL: ${(camera?.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\nO stream estava rodando e caiu subitamente. Causas possíveis: queda de rede, câmera reiniciou, ou timeout. Reconectando em ${RECONNECT_DELAY_MS}ms.`,
+          `Câmera: ${name}\nIP: ${camera?.ip || '—'}:${camera?.port || '—'}\nUsuário: ${camera?.username || '—'}\nURL: ${(camera?.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nQualidade atual: ${state.quality}\n\nO stream estava rodando e caiu subitamente. Causas possíveis: queda de rede, câmera reiniciou, ou timeout.`,
           'streaming',
         );
+        // Se estava em high e caiu, tenta failover para low
+        if (state.quality === 'high' && attemptFailoverToLow()) return;
       }
+
       const msg = neverConnected
         ? 'Sem sinal — verifique a URL/credenciais. Tentando reconectar…'
         : 'Conexão perdida. Reconectando…';
@@ -414,6 +617,8 @@ export class StreamingService {
         state.reconnectTimer = undefined;
         if (neverConnected) state.urlAttempt = 0; // reinicia tentativas do início
         this.spawnCameraFfmpeg(state);
+        // Se está em failover (low), agenda probe para voltar ao high
+        scheduleProbeToHigh();
       }, RECONNECT_DELAY_MS);
     });
   }
@@ -448,6 +653,11 @@ export class StreamingService {
       gotData: true,
       stopping: false,
       isFile: true,
+      quality: 'high',
+      preferredQuality: 'high',
+      failoverActive: false,
+      stallCount: 0,
+      probeAttempt: 0,
       lastDataAt: Date.now(),
       urlCandidates: [],
       urlAttempt: 0,
@@ -469,6 +679,8 @@ export class StreamingService {
     stream.stopping = true;
     if (stream.reconnectTimer) clearTimeout(stream.reconnectTimer);
     if (stream.watchdog) clearInterval(stream.watchdog);
+    if (stream.failoverTimer) clearTimeout(stream.failoverTimer);
+    if (stream.probeTimer) clearTimeout(stream.probeTimer);
     this.streams.delete(cameraId);
     const camera = stream.camera;
     const name = camera?.name || cameraId;

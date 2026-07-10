@@ -62,6 +62,12 @@
 - **Problema:** `hlsManager.ts` usava `camera.streamUrl` diretamente no FFmpeg sem chamar `injectCredentials()`, ao contrário de todos os outros consumidores (`streaming.ts`, `continuousRecording.ts`, `recording.ts`, `snapshotService.ts`, `motionDetection.ts`). O streaming HLS quebrava para câmeras cuja URL não tinha `user:pass@` embutido.
 - **Solução:** Adicionado `injectCredentials(camera.streamUrl, camera.username, camera.password)` no argumento `-i` do FFmpeg.
 
+#### 6. Fallback RTSP sempre ativo (mesmo com path específico)
+**Arquivo:** `electron/core/streaming.ts:232-252`
+
+- **Problema:** `buildUrlCandidates()` só adicionava paths de fallback se o path da URL original fosse vazio ou `/`. Câmeras cujo ONVIF retornava um path específico (ex: Xiongmai retorna `/onvif1`) mas que falhava na prática ficavam com 1 tentativa só (`tentativa 1/1`), sem nunca tentar os outros 58 paths.
+- **Solução:** Fallbacks são sempre adicionados após a URL original, independente do path. Inclui deduplicação para não repetir a mesma URL se o path original já coincidir com um fallback.
+
 ### Problemas conhecidos
 
 - Se todas as URLs falharem, o sistema entra em loop: testa todos fallbacks → espera 3s → repete do início. Isso gera logs mas não danifica nada.
