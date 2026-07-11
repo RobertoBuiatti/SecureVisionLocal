@@ -28,6 +28,7 @@ export function PTZTourPanel({ cameraId, onClose }: PTZTourPanelProps) {
   const [editorPreset, setEditorPreset] = useState<PTZPreset | null>(null);
   const [editingPreset, setEditingPreset] = useState<PTZPreset | null>(null);
   const [editPresetName, setEditPresetName] = useState('');
+  const [recapturing, setRecapturing] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const ps = await window.svl.ptz.listPresets(cameraId);
@@ -117,6 +118,16 @@ export function PTZTourPanel({ cameraId, onClose }: PTZTourPanelProps) {
     await refresh();
   }
 
+  async function recaptureSnapshot(presetId: string) {
+    setRecapturing(presetId);
+    try {
+      await window.svl.ptz.recaptureSnapshot(presetId);
+      await refresh();
+    } finally {
+      setRecapturing(null);
+    }
+  }
+
   async function verifyPositions() {
     setVerifying(true);
     try {
@@ -183,6 +194,15 @@ export function PTZTourPanel({ cameraId, onClose }: PTZTourPanelProps) {
                         <button onClick={() => setEditorPreset(p)}>Marcas</button>
                         <button onClick={() => startEditPreset(p)}>Editar</button>
                         <button onClick={() => window.svl.ptz.updatePresetPosition(cameraId, p.id)}>Salvar posição</button>
+                        {!p.snapshotPath && (
+                          <button
+                            className="btn small"
+                            onClick={() => recaptureSnapshot(p.id)}
+                            disabled={recapturing === p.id}
+                          >
+                            {recapturing === p.id ? '⏳…' : '📷 Recapturar'}
+                          </button>
+                        )}
                         <button
                           onClick={async () => {
                             await window.svl.ptz.deletePreset(p.id);

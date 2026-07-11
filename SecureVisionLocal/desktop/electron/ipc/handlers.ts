@@ -330,6 +330,24 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
       return null;
     }
   });
+  // Recaptura snapshot de um preset existente sem imagem de referência.
+  ipcMain.handle(IPC.ptzRecaptureSnapshot, async (_e, presetId: string) => {
+    const preset = getPreset(presetId);
+    if (!preset) return null;
+    const camera = getCamera(preset.cameraId);
+    if (!camera) return null;
+    const snapPath = join(presetsSnapshotDir(), `${preset.id}.jpg`);
+    const captured = await captureJpeg(camera, snapPath, true);
+    if (captured) {
+      setPresetSnapshot(preset.id, snapPath);
+      preset.snapshotPath = snapPath;
+      // Re-gera embedding AI (best-effort)
+      const aiUrl = camera.subStreamUrl || camera.streamUrl;
+      computeAndSaveReferenceEmbedding(aiUrl, preset.id).catch(() => {});
+    }
+    return getPreset(presetId);
+  });
+
   ipcMain.handle(IPC.ptzVerifyPositions, (_e, cameraId: string) =>
     positionVerifier.verifyCameraById(cameraId),
   );

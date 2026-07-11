@@ -65,7 +65,7 @@ export async function captureJpeg(camera: Camera, outPath: string, preferHighQua
 function snapOne(url: string, outPath: string): Promise<boolean> {
   const args = [
     '-rtsp_transport', 'tcp',
-    '-stimeout', '3000000',
+    '-timeout', '3000000',
     '-i', url,
     '-frames:v', '1',
     '-q:v', '3',
@@ -76,9 +76,17 @@ function snapOne(url: string, outPath: string): Promise<boolean> {
 
 function run(args: string[]): Promise<boolean> {
   return new Promise((resolve) => {
-    const ff = spawn(FFMPEG_PATH, args, { stdio: 'ignore' });
+    const ff = spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    const stderrChunks: Buffer[] = [];
+    ff.stderr?.on('data', (c: Buffer) => stderrChunks.push(c));
     ff.on('error', () => resolve(false));
-    ff.on('close', (code) => resolve(code === 0));
+    ff.on('close', (code) => {
+      if (code !== 0) {
+        const stderr = Buffer.concat(stderrChunks).toString('utf-8').trim();
+        console.warn(`[snapshotService] FFmpeg falhou (code ${code}): ${stderr.slice(0, 500)}`);
+      }
+      resolve(code === 0);
+    });
   });
 }
 

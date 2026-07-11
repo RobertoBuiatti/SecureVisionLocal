@@ -68,6 +68,7 @@ const api: SvlApi = {
       ipcRenderer.invoke(IPC.ptzSaveReferenceMarks, presetId, marks),
     getReferenceMarks: (presetId) => ipcRenderer.invoke(IPC.ptzGetReferenceMarks, presetId),
     detectFeatures: (presetId) => ipcRenderer.invoke(IPC.ptzDetectFeatures, presetId),
+    recaptureSnapshot: (presetId) => ipcRenderer.invoke(IPC.ptzRecaptureSnapshot, presetId),
   },
   settings: {
     get: () => ipcRenderer.invoke(IPC.settingsGet),

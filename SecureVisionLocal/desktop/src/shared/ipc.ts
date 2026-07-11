@@ -74,6 +74,7 @@ export const IPC = {
   ptzSaveReferenceMarks: 'ptz:save-reference-marks',
   ptzGetReferenceMarks: 'ptz:get-reference-marks',
   ptzDetectFeatures: 'ptz:detect-features',
+  ptzRecaptureSnapshot: 'ptz:recapture-snapshot',
   settingsGet: 'settings:get',
   settingsUpdate: 'settings:update',
   detectionGetConfig: 'detection:get-config',
@@ -158,6 +159,7 @@ export interface SvlApi {
     ) => Promise<ReferenceMark[]>;
     getReferenceMarks: (presetId: string) => Promise<ReferenceMark[]>;
     detectFeatures: (presetId: string) => Promise<Array<Omit<ReferenceMark, 'id' | 'presetId' | 'createdAt'>>>;
+    recaptureSnapshot: (presetId: string) => Promise<PTZPreset | null>;
   };
   settings: {
     get: () => Promise<AppSettings>;

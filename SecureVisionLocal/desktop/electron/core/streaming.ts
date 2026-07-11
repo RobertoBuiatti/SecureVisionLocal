@@ -14,7 +14,7 @@ const WS_HOST = '127.0.0.1';
 const WS_PORT_MIN = 9100;
 const WS_PORT_MAX = 9400;
 // Timeouts de stall (travamento) por qualidade. High mais tolerante p/ evitar failover prematuro.
-const STALL_TIMEOUT_MS = { high: 15000, low: 25000 };
+const STALL_TIMEOUT_MS = { high: 30000, low: 45000 };
 const WATCHDOG_INTERVAL_MS = 3000; // frequência de checagem do travamento
 const MAX_STALLS_BEFORE_FAILOVER = 3; // quantos stalls consecutivos em high antes de cair p/ low
 const MIN_TIME_IN_LOW_MS = 60_000; // fica no low pelo menos 60s antes de tentar voltar
@@ -139,6 +139,7 @@ interface ActiveStream {
   urlCandidates: string[]; // URLs a tentar (fallback paths)
   urlAttempt: number; // índice atual em urlCandidates
   stallCount: number; // stalls consecutivos na qualidade atual (reset ao trocar qualidade)
+  reconnectCount: number; // tentativas de reconexão consecutivas (para backoff)
   // Probe de estabilidade para voltar ao high
   probeTimer?: ReturnType<typeof setTimeout>;
   probeAttempt: number; // tentativa de probe (para backoff exponencial)
@@ -205,6 +206,7 @@ export class StreamingService {
       urlAttempt: 0,
       preferredQuality: quality,
       failoverActive: false,
+      reconnectCount: 0,
     };
     this.streams.set(camera.id, state);
     this.spawnCameraFfmpeg(state);
@@ -313,6 +315,7 @@ export class StreamingService {
     const args = [
       ...hwaccelArgs(),
       '-rtsp_transport', 'tcp',
+      '-timeout', '10000000',
       '-fflags', isLow ? 'nobuffer+igndts+discardcorrupt' : 'nobuffer',
       '-flags', 'low_delay',
       '-analyzeduration', isLow ? '1000000' : '5000000',
@@ -380,10 +383,12 @@ export class StreamingService {
           `Câmera: ${state.camera?.name || state.cameraId}\nIP: ${state.camera?.ip || '—'}:${state.camera?.port || '—'}\nUsuário: ${state.camera?.username || '—'}\nURL: ${(state.camera?.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\nO sistema tentará restabelecer o stream automaticamente após ${RECONNECT_DELAY_MS}ms.`,
           'streaming',
         );
+        const backoff = Math.min(RECONNECT_DELAY_MS * Math.pow(2, state.reconnectCount), 30_000);
+        state.reconnectCount++;
       state.reconnectTimer = setTimeout(() => {
           state.reconnectTimer = undefined;
           this.spawnCameraFfmpeg(state);
-        }, RECONNECT_DELAY_MS);
+        }, backoff);
       }
     });
     ffmpeg.stdout?.on('data', (chunk: Buffer) => {
@@ -391,6 +396,7 @@ export class StreamingService {
       if (!state.gotData) {
         state.gotData = true;
         state.stallCount = 0; // reset stall count ao conectar com sucesso
+        state.reconnectCount = 0; // reset reconexão ao conectar
         const camera = state.camera;
         const name = camera?.name || state.cameraId;
         insertCameraLog(
@@ -480,6 +486,7 @@ export class StreamingService {
         const probeArgs = [
           ...hwaccelArgs(),
           '-rtsp_transport', 'tcp',
+          '-timeout', '10000000',
           '-fflags', 'nobuffer',
           '-flags', 'low_delay',
           '-analyzeduration', '1000000',
@@ -613,13 +620,15 @@ const probe = spawn(FFMPEG_PATH, probeArgs, { stdio: ['ignore', 'ignore', 'pipe'
         ? 'Sem sinal — verifique a URL/credenciais. Tentando reconectar…'
         : 'Conexão perdida. Reconectando…';
       this.notifier?.({ cameraId: state.cameraId, status: 'error', error: msg });
+      const backoff = Math.min(RECONNECT_DELAY_MS * Math.pow(2, state.reconnectCount), 30_000);
+      state.reconnectCount++;
       state.reconnectTimer = setTimeout(() => {
         state.reconnectTimer = undefined;
         if (neverConnected) state.urlAttempt = 0; // reinicia tentativas do início
         this.spawnCameraFfmpeg(state);
         // Se está em failover (low), agenda probe para voltar ao high
         scheduleProbeToHigh();
-      }, RECONNECT_DELAY_MS);
+      }, backoff);
     });
   }
 
@@ -661,6 +670,7 @@ const probe = spawn(FFMPEG_PATH, probeArgs, { stdio: ['ignore', 'ignore', 'pipe'
       lastDataAt: Date.now(),
       urlCandidates: [],
       urlAttempt: 0,
+      reconnectCount: 0,
     };
     ffmpeg.on('error', () => this.stop(playKey));
     ffmpeg.stdout?.on('data', (chunk: Buffer) => {

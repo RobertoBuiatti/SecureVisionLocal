@@ -126,12 +126,23 @@ export async function probeOnvifDevice(
 }
 
 // Injeta usuário:senha numa URL RTSP que ainda não os tenha.
+// IMPORTANTE: URLs Xiongmai (e clones) trazem credenciais no path/query
+// (ex.: user=pwms_password=xGDon0HN&channel=0&...). Se a URL já tem auth
+// via `user:pass@` E também credenciais path-based, a forma auth é removida
+// para evitar "Operation not permitted" (a câmera rejeita ambos ao mesmo tempo).
 export function injectCredentials(url: string, username?: string, password?: string): string {
   if (!url) return url;
-  if (url.includes('@')) return url; // já tem credenciais no formato user:pass@
+  const hasPathCreds = /[?&]password=|[?&/]user=[^&]*_password=|\/user=/i.test(url);
   // Xiongmai e clones: credenciais no query/path como user=..._password=... ou user=...&password=...
-  // Detecta: ?password=, &password=, ?user=..._password=, &user=..._password=, /user=..._password=, /user=
-  if (/[?&]password=|[?&/]user=[^&]*_password=|\/user=/i.test(url)) return url;
+  if (hasPathCreds) {
+    // Se também tem `user:pass@` antes do @, remove para não duplicar credenciais.
+    // Ex.: rtsp://foo:bar@ip:554/user=pwms_password=xGDon0HN&... → rtsp://ip:554/user=pwms_password=...
+    if (url.includes('@')) {
+      return url.replace(/^(rtsp:\/\/)[^@]*@/i, '$1');
+    }
+    return url; // só credenciais path-based, mantém
+  }
+  if (url.includes('@')) return url; // já tem credenciais no formato user:pass@
   if (!username) return url; // sem usuário, mantém URL original
   return url.replace(/^rtsp:\/\//i, `rtsp://${encodeURIComponent(username)}:${encodeURIComponent(password ?? '')}@`);
 }

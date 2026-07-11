@@ -72,3 +72,68 @@
 
 - Se todas as URLs falharem, o sistema entra em loop: testa todos fallbacks → espera 3s → repete do início. Isso gera logs mas não danifica nada.
 - Algumas câmeras muito antigas podem usar paths não listados. A lista pode ser expandida via `RTSP_FALLBACK_PATHS` em `streaming.ts`.
+
+---
+
+## v0.1.16 → v0.1.36 (09/07/2026)
+
+### O que foi feito
+
+#### 1. Correção de `injectCredentials` para URLs com credenciais duplicadas
+**Arquivo:** `electron/core/onvifInfo.ts:128-148`
+
+- **Problema:** Quando a URL já continha `user:pass@` (auth padrão) E também tinha credenciais path-based (`user=...&password=...`) — formato Xiongmai — a câmera rejeitava com "Operation not permitted".
+- **Solução:** Se a URL tem `@` E tem path-based creds, a parte `user:pass@` é removida, mantendo apenas as path-based. Exemplo: `rtsp://foo:bar@ip:554/user=pwms_password=xGDon0HN...` → `rtsp://ip:554/user=pwms_password=...`
+
+#### 2. Captura de stderr do FFmpeg no snapshot
+**Arquivo:** `electron/core/snapshotService.ts:77-88`
+
+- **Problema:** Quando snapshot falhava, não havia diagnóstico do erro FFmpeg.
+- **Solução:** `run()` agora captura stderr do FFmpeg e loga via `console.warn` quando código de saída é não-zero. Stderr truncado em 500 chars.
+
+#### 3. Correção de `-stimeout` incompatível
+**Arquivo:** `electron/core/snapshotService.ts:66-74`
+
+- **Problema:** O FFmpeg embutido (6.1.1-essentials_build) não reconhece `-stimeout` (opção específica RTSP que depende da build). Causava "Unrecognized option" e falha na captura.
+- **Solução:** Substituído por `-timeout` (opção genérica compatível com todas as builds).
+
+#### 4. Handler IPC de recaptura de snapshot
+**Arquivo:** `electron/ipc/handlers.ts:333-349`
+
+- **Problema:** Presets salvos sem snapshot de referência ficavam permanentemente sem imagem. Não havia como recapturar sem atualizar a posição inteira.
+- **Solução:** Novo handler `ptz:recapture-snapshot` que recebe `presetId`, busca câmera, chama `captureJpeg` com prioridade de stream principal, atualiza DB e regera embedding AI.
+
+#### 5. Botão "Recapturar" na UI
+**Arquivo:** `src/components/PTZTourPanel.tsx`
+
+- **Solução:** Para presets sem `snapshotPath`, exibe botão "📷 Recapturar" que aciona o handler de recaptura. Mostra "⏳…" durante processamento.
+
+#### 6. Fix: Perda de conexão de câmera
+**Arquivo:** `electron/core/streaming.ts`
+
+- **Problema:** Câmeras perdiam conexão facilmente (especialmente via WiFi). 3 causas identificadas:
+  1. Sem `-timeout` no FFmpeg de streaming (mesmo problema que existia no snapshot)
+  2. Watchdog agressivo: `STALL_TIMEOUT_MS = { high: 15000, low: 25000 }` — pouco para WiFi flaky
+  3. Sem backoff exponencial: sempre reconectava após 3s fixo
+- **Solução:**
+  - `STALL_TIMEOUT_MS` → `{ high: 30000, low: 45000 }` (2x mais tolerante)
+  - `-timeout 10000000` adicionado aos args FFmpeg de streaming E ao probe
+  - Backoff exponencial: `min(3000 * 2^reconnectCount, 30000)`, resetado ao receber primeiro frame
+
+### Para testar no PC servidor
+
+1. Instalar `release\SecureVision Local-Setup-0.1.36.exe`
+2. Rodar e verificar se as câmeras Xiongmai conectam sem "Operation not permitted"
+3. Salvar preset PTZ e verificar se snapshot é capturado com sucesso
+4. Se snapshot falhar, verificar logs — agora mostra stderr do FFmpeg
+5. Para testar reconexão: desconectar/reconectar cabo da câmera e observar reconexão automática com backoff
+
+### Arquivos modificados
+
+- `electron/core/onvifInfo.ts` — `injectCredentials()` fix
+- `electron/core/snapshotService.ts` — stderr logging, `-stimeout` → `-timeout`
+- `electron/ipc/handlers.ts` — recapture IPC handler
+- `src/shared/ipc.ts` — IPC channel + type
+- `electron/preload.ts` — preload bridge
+- `src/components/PTZTourPanel.tsx` — recapture button
+- `electron/core/streaming.ts` — stalls timeout, `-timeout`, backoff reconexão
