@@ -1,5 +1,5 @@
 import type { Camera } from '../../src/shared/types';
-import { listCameras } from './cameraRepository';
+import { listCameras, isDuplicateShadow } from './cameraRepository';
 import { continuousRecordingService, recordingCameraDir } from './continuousRecording';
 import { streamingService } from './streaming';
 import { getSettings } from './settings';
@@ -63,8 +63,15 @@ class RecordingManager {
   // de reconexão/failover) e indexa os segmentos gravados. Não há mais "pular offline":
   // a puxada persiste e se recupera sozinha.
   private reconcile(): void {
-    for (const camera of listCameras()) {
+    const cams = listCameras();
+    for (const camera of cams) {
       const dir = recordingCameraDir(camera.id);
+      // Duplicata do mesmo dispositivo: não grava (evita 2ª puxada RTSP na câmera). Só o
+      // cadastro principal grava; assim não há contenção de sessão / lag.
+      if (isDuplicateShadow(camera, cams)) {
+        void streamingService.setRecording(camera, false, '', 0);
+        continue;
+      }
       if (shouldRecordContinuous(camera)) {
         void streamingService.setRecording(camera, true, dir, this.segmentSeconds());
         continuousRecordingService.indexSegments(camera.id, camera.name, dir, true);

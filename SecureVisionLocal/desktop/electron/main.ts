@@ -2,7 +2,7 @@ import { app, BrowserWindow, Tray, Menu, nativeImage } from 'electron';
 import { join } from 'node:path';
 import { registerIpcHandlers } from './ipc/handlers';
 import { getDb, closeDb } from './core/db';
-import { migrateCameraSecrets } from './core/cameraRepository';
+import { migrateCameraSecrets, mergeDuplicateCameras } from './core/cameraRepository';
 import { applyStartWithWindows } from './core/autostart';
 import { streamingService } from './core/streaming';
 import { IPC } from '../src/shared/ipc';
@@ -159,6 +159,7 @@ if (!gotLock) {
   app.whenReady().then(() => {
     getDb(); // inicializa/migra o banco
     migrateCameraSecrets(); // cifra senhas/URLs legadas em texto puro (safeStorage)
+    mergeDuplicateCameras(); // consolida cadastros duplicados da mesma câmera (1 por aparelho)
     applyStartWithWindows(); // sincroniza o registro de inicialização com a configuração
     registerIpcHandlers(() => mainWindow);
     // Encaminha o status dos streams (running/erro) para a UI.
@@ -168,6 +169,9 @@ if (!gotLock) {
       (camera, config, stream) => aiDetectionService.attachStream(camera, config, stream),
       (cameraId) => aiDetectionService.stop(cameraId),
     );
+    // Sem IP fixo: se o stream não conectar (possível troca de IP por DHCP), o
+    // StreamingService pede ao monitor para reencontrar a câmera pelo MAC na hora.
+    streamingService.setHealRequester((cameraId) => void connectionMonitor.healNow(cameraId));
     motionDetectionService.setNotifier((ev) => {
       mainWindow?.webContents.send(IPC.evtDetection, ev);
       notifyDetection(ev); // notificação nativa + webhook (respeita as configurações)

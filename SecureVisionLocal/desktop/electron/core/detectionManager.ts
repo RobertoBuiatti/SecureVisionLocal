@@ -1,4 +1,4 @@
-import { listCameras } from './cameraRepository';
+import { listCameras, isDuplicateShadow } from './cameraRepository';
 import { getDetectionConfig } from './detectionRepository';
 import { motionDetectionService } from './motionDetection';
 import { aiDetectionService } from './ai/aiDetection';
@@ -49,7 +49,15 @@ class DetectionManager {
   // uma câmera inacessível. Ao voltar, o monitor de conexão a marca online e o
   // próximo ciclo religa a detecção.
   private reconcile(): void {
-    for (const camera of listCameras()) {
+    const cams = listCameras();
+    for (const camera of cams) {
+      // Duplicata do mesmo dispositivo: desliga detecção (evita 2ª sessão RTSP do motion
+      // e 2ª puxada da IA). Só o cadastro principal detecta.
+      if (isDuplicateShadow(camera, cams)) {
+        if (motionDetectionService.isActive(camera.id)) motionDetectionService.stop(camera.id);
+        void streamingService.setDetection(camera, getDetectionConfig(camera.id), false);
+        continue;
+      }
       const config = getDetectionConfig(camera.id);
       const reachable = camera.status !== 'offline';
 

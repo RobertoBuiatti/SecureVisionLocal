@@ -1,6 +1,6 @@
 import { Notification } from 'electron';
 import type { Camera, PositionCheckResult, PTZDirection } from '../../src/shared/types';
-import { listCameras, getCamera } from './cameraRepository';
+import { listCameras, getCamera, isDuplicateShadow } from './cameraRepository';
 import { listPresets, setPresetCheck, getTour } from './ptzRepository';
 import { gotoPresetOnvif, updatePresetOnvif, controlPtz } from './ptz';
 import { getReferenceMarks } from './referenceMarksRepository';
@@ -139,9 +139,11 @@ class PositionVerifier {
     if (this.running) return;
     this.running = true;
     try {
-      for (const camera of listCameras()) {
+      const cams = listCameras();
+      for (const camera of cams) {
         if (this.aborted) break;
-        if (camera.hasPTZ) await this.verifyCamera(camera);
+        // Não verifica duplicatas do mesmo dispositivo (evita puxada concorrente).
+        if (camera.hasPTZ && !isDuplicateShadow(camera, cams)) await this.verifyCamera(camera);
       }
     } finally {
       this.running = false;

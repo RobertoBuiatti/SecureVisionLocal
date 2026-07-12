@@ -31,9 +31,14 @@ const MAX_STALLS_BEFORE_FAILOVER = 3; // quantos stalls consecutivos em high ant
 // Probe de restauração do HD deliberadamente LENTO: em câmera 8MP via WiFi o HD raramente
 // estabiliza, e cada probe abre uma sessão 8MP que satura a rede. Espaçar bastante evita
 // que o probe atrapalhe o vídeo/gravação. (Antes: 60s / 30s → agressivo demais.)
-const MIN_TIME_IN_LOW_MS = 300_000; // fica no low ao menos 5min antes de tentar voltar ao HD
+// O probe de restauração do HD abre uma 2ª sessão RTSP 8MP na câmera. Em XM/8MP (que
+// serve pouquíssimas sessões) isso COMPETE com o vídeo ao vivo do sub-stream e causa
+// micro-cortes. Como o sub-stream é aceitável, o probe é DELIBERADAMENTE raro e limitado:
+// fica bastante tempo no sub antes de arriscar o HD, e desiste após poucas tentativas.
+const MIN_TIME_IN_LOW_MS = 1_800_000; // 30min no sub antes de tentar o HD
 const PROBE_STABLE_MS = 10_000; // probe no high deve ficar estável 10s antes de confirmar troca
-const PROBE_RETRY_BASE_MS = 300_000; // base do backoff se o probe falhar (5min, 10min, 20min…)
+const PROBE_RETRY_BASE_MS = 900_000; // base do backoff se o probe falhar (15min, 30min, 60min…)
+const MAX_PROBE_ATTEMPTS = 6; // após isso, FICA no sub e para de tentar HD (sem novas sessões 8MP)
 
 // Caminhos RTSP alternativos para câmeras cujo ONVIF retorna URL genérica (apenas "/").
 // Muitas marcas (Xiongmai, Hikvision, Intelbras/Dahua, TP-Link, Reolink, Foscam,
@@ -154,6 +159,7 @@ interface ActiveStream {
   urlAttempt: number; // índice atual em urlCandidates
   stallCount: number; // stalls consecutivos na qualidade atual (reset ao trocar qualidade)
   reconnectCount: number; // tentativas de reconexão consecutivas (para backoff)
+  hwFailed?: boolean; // aceleração de HW abriu o RTSP mas não produziu quadro → usar software (comum em HEVC/dxva2)
   // Probe de estabilidade para voltar ao high
   probeTimer?: ReturnType<typeof setTimeout>;
   probeAttempt: number; // tentativa de probe (para backoff exponencial)
@@ -186,6 +192,14 @@ export class StreamingService {
 
   setNotifier(notifier: Notifier): void {
     this.notifier = notifier;
+  }
+
+  // Gancho para pedir ao monitor de conexão que reencontre a câmera pelo MAC AGORA
+  // (quando o stream não conecta e pode ser troca de IP por DHCP, mesmo com o IP antigo
+  // ainda respondendo TCP). Injetado no main para não acoplar os módulos.
+  private healRequester?: (cameraId: string) => void;
+  setHealRequester(fn: (cameraId: string) => void): void {
+    this.healRequester = fn;
   }
 
   // Injeta como a detecção IA recebe os quadros da puxada única (evita acoplar módulos).
@@ -498,7 +512,9 @@ export class StreamingService {
 
     // FONTE ÚNICA: uma puxada RTSP, decodificada UMA vez, com várias saídas locais.
     const inputArgs = [
-      ...hwaccelArgs(),
+      // Se a aceleração de HW já falhou nesta puxada (abriu mas não deu quadro — típico
+      // de HEVC via dxva2), decodifica por software.
+      ...(state.hwFailed ? [] : hwaccelArgs()),
       '-rtsp_transport', 'tcp',
       '-timeout', '10000000',
       // discardcorrupt: descarta pacotes corrompidos (comuns em WiFi) em vez de travar
@@ -700,7 +716,7 @@ export class StreamingService {
         );
 
         const probeArgs = [
-          ...hwaccelArgs(),
+          ...(st.hwFailed ? [] : hwaccelArgs()),
           '-rtsp_transport', 'tcp',
           '-timeout', '10000000',
           '-fflags', 'nobuffer',
@@ -780,7 +796,20 @@ const probe = spawn(FFMPEG_PATH, probeArgs, { stdio: ['ignore', 'ignore', 'pipe'
       const scheduleProbeRetry = (st: ActiveStream) => {
         if (st.stopping || st.quality !== 'low') return;
         st.probeAttempt = (st.probeAttempt || 0) + 1;
-        const backoff = PROBE_RETRY_BASE_MS * Math.min(2 ** (st.probeAttempt - 1), 8); // 30s, 60s, 120s... max 128x
+        // Limite: após MAX_PROBE_ATTEMPTS, para de tentar o HD e fica no sub-stream
+        // (estável). Evita abrir novas sessões 8MP que competem com o vídeo ao vivo.
+        if (st.probeAttempt > MAX_PROBE_ATTEMPTS) {
+          insertCameraLog(
+            st.cameraId,
+            name,
+            'info',
+            `Mantendo sub-stream de "${name}" — auto-restauração do HD pausada`,
+            `Câmera: ${name}\nApós ${MAX_PROBE_ATTEMPTS} tentativas o HD (8MP) não estabilizou. O app fica no sub-stream (conexão estável) e PARA de tentar reabrir o HD automaticamente — assim não abre mais sessões 8MP concorrentes na câmera. O HD volta a ser tentado ao reabrir a câmera/stream.`,
+            'streaming',
+          );
+          return;
+        }
+        const backoff = PROBE_RETRY_BASE_MS * Math.min(2 ** (st.probeAttempt - 1), 8);
         insertCameraLog(
           st.cameraId,
           name,
@@ -796,6 +825,28 @@ const probe = spawn(FFMPEG_PATH, probeArgs, { stdio: ['ignore', 'ignore', 'pipe'
       };
 
       if (neverConnected) {
+        // Abriu o RTSP mas NÃO saiu quadro? Em H.265/HEVC a aceleração de hardware
+        // (dxva2/auto) às vezes "decodifica no vazio" e o FFmpeg não emite nada. Antes de
+        // trocar de URL / fazer failover, tenta UMA vez com decodificação por SOFTWARE na
+        // mesma URL — costuma resolver de imediato. Fica sticky nesta puxada (até reiniciar).
+        if (!state.hwFailed && hwaccelArgs().length > 0) {
+          state.hwFailed = true;
+          insertCameraLog(
+            state.cameraId,
+            name,
+            'warn',
+            `Sem quadros com aceleração de hardware em "${name}" — tentando por software (H.265/HEVC)`,
+            `Câmera: ${name}\nIP: ${camera?.ip || '—'}:${camera?.port || '—'}\n\nO FFmpeg abriu o RTSP mas não produziu quadro usando a aceleração de hardware (comum em streams H.265/HEVC via dxva2, que não cai para software sozinho). Recriando o pipeline com decodificação por SOFTWARE. Se for isso, o vídeo volta em seguida.`,
+            'streaming',
+          );
+          state.urlAttempt = 0;
+          if (state.reconnectTimer) clearTimeout(state.reconnectTimer);
+          state.reconnectTimer = setTimeout(() => {
+            state.reconnectTimer = undefined;
+            this.spawnCameraFfmpeg(state);
+          }, 300);
+          return;
+        }
         // Nunca conectou: tenta próxima URL na lista de fallbacks
         const nextAttempt = state.urlAttempt + 1;
         const hasMoreUrls = nextAttempt < state.urlCandidates.length;
@@ -816,6 +867,11 @@ const probe = spawn(FFMPEG_PATH, probeArgs, { stdio: ['ignore', 'ignore', 'pipe'
           }, 500);
           return;
         }
+        // Esgotou as URLs e nunca conectou. Pode ser troca de IP (DHCP) — mesmo que o IP
+        // antigo ainda responda TCP (fantasma), o stream não vem. Pede ao monitor para
+        // reencontrar a câmera pelo MAC AGORA (não espera o ciclo). Se o IP mudou, o
+        // refreshCamera religa no IP novo; se não, segue a reconexão normal abaixo.
+        this.healRequester?.(state.cameraId);
         // Acabaram as URLs do high e NUNCA conectou: cai imediatamente para o sub-stream
         // (força, sem esperar acumular stalls — o main 8MP às vezes nem abre em WiFi).
         if (state.quality === 'high' && attemptFailoverToLow(true)) return;

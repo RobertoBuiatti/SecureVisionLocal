@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { getDb } from './db';
 import { encryptSecret, decryptSecret, decryptSecretLegacy, isEncrypted, PREFIX_V1 } from './secrets';
+import { normalizeMac, rewriteRtspHost } from './ipResolver';
+import { insertCameraLog } from './cameraLogger';
 import type { Camera, CreateCameraDTO, CameraType } from '../../src/shared/types';
 
 // Linha do SQLite (inteiros para booleanos) → objeto de domínio.
@@ -68,19 +70,67 @@ export function getCamera(id: string): Camera | null {
   return row ? rowToCamera(row) : null;
 }
 
-export function addCamera(dto: CreateCameraDTO): Camera {
-  // Bloqueia cadastro duplicado do MESMO dispositivo. Cadastrar a mesma câmera
-  // mais de uma vez faz o app abrir N puxadas RTSP simultâneas nela — câmeras
-  // Xiongmai/8MP servem pouquíssimas sessões e passam a recusar o vídeo (o TCP
-  // conecta, mas o stream dá "Sem sinal"). Compara por IP+porta+URL de stream,
-  // permitindo canais distintos do mesmo NVR (que têm streamUrl diferente).
-  const duplicate = listCameras().find(
-    (c) => c.ip === dto.ip && c.port === dto.port && c.streamUrl === dto.streamUrl,
+// Identidade ESTÁVEL do dispositivo, independente do IP (que muda por DHCP no WiFi).
+// Usa a URL de stream com o host normalizado (mantém credenciais/canal/porta, que são
+// específicos do aparelho) + usuário + porta. Assim, o MESMO dispositivo em IPs
+// diferentes (ex.: 192.168.1.9 e 192.168.1.10) produz a MESMA chave. Cai para o MAC se
+// não houver URL. Câmeras diferentes (ou canais distintos de um NVR) têm chaves distintas.
+function deviceKeyOf(
+  streamUrl: string,
+  subStreamUrl: string | undefined,
+  username: string | undefined,
+  port: number,
+): string {
+  const url = streamUrl || subStreamUrl || '';
+  if (url) return `url:${rewriteRtspHost(url, '_').toLowerCase()}|${(username || '').toLowerCase()}|${port}`;
+  return '';
+}
+
+export function cameraDeviceKey(c: Camera): string {
+  return (
+    deviceKeyOf(c.streamUrl, c.subStreamUrl, c.username, c.port) ||
+    (c.mac ? `mac:${normalizeMac(c.mac)}` : `id:${c.id}`)
   );
+}
+
+// Escolhe o cadastro PRINCIPAL de um grupo do mesmo dispositivo. Prefere o que está
+// funcionando de fato: ONLINE primeiro (o IP que responde), depois o atualizado mais
+// recentemente (o app bumpa updatedAt ao curar/transmitir o cadastro ativo), e por fim
+// o mais antigo (desempate estável). Assim não corremos o risco de manter um cadastro
+// MORTO como principal e sombrear o que realmente transmite.
+export function primaryOfGroup(group: Camera[]): Camera {
+  return group.reduce((best, c) => {
+    const bo = best.status === 'online' ? 1 : 0;
+    const co = c.status === 'online' ? 1 : 0;
+    if (co !== bo) return co > bo ? c : best;
+    if (c.updatedAt !== best.updatedAt) return c.updatedAt > best.updatedAt ? c : best;
+    return c.createdAt < best.createdAt ? c : best;
+  });
+}
+
+// Verdadeiro se `camera` é uma DUPLICATA (mesmo dispositivo já cadastrado com outro id) e
+// NÃO é o principal do grupo. Usado para NÃO abrir várias puxadas RTSP para o mesmo
+// aparelho (causa de lag/"Sem sinal" em câmeras XM).
+export function isDuplicateShadow(camera: Camera, all: Camera[] = listCameras()): boolean {
+  const key = cameraDeviceKey(camera);
+  if (key.startsWith('id:')) return false; // sem identidade estável → não agrupa
+  const group = all.filter((c) => cameraDeviceKey(c) === key);
+  if (group.length <= 1) return false;
+  return camera.id !== primaryOfGroup(group).id;
+}
+
+export function addCamera(dto: CreateCameraDTO): Camera {
+  // Bloqueia cadastro duplicado do MESMO dispositivo — inclusive quando ele aparece em
+  // OUTRO IP (DHCP). Cadastrar a mesma câmera 2x faz o app abrir N puxadas RTSP nela, e
+  // câmeras Xiongmai/8MP servem pouquíssimas sessões → o vídeo passa a dar "Sem sinal"
+  // e o app fica reiniciando/lagando. Compara pela identidade estável do dispositivo.
+  const dtoKey = deviceKeyOf(dto.streamUrl, dto.subStreamUrl, dto.username, dto.port);
+  const duplicate = dtoKey ? listCameras().find((c) => cameraDeviceKey(c) === dtoKey) : null;
   if (duplicate) {
     throw new Error(
       `Câmera já cadastrada: "${duplicate.name}" (${duplicate.ip}:${duplicate.port}). ` +
-        `Cadastro duplicado bloqueado — remova a existente antes de recadastrar.`,
+        `É o MESMO dispositivo (mesma URL/credenciais), possivelmente em outro IP. ` +
+        `Cadastro duplicado bloqueado — remova o existente antes de recadastrar.`,
     );
   }
 
@@ -216,4 +266,72 @@ export function migrateCameraSecrets(): void {
       subStreamUrl: newSubStream,
     });
   }
+}
+
+// MERGE de duplicatas na inicialização: quando a mesma câmera física foi cadastrada mais
+// de uma vez (ex.: readicionada após troca de IP por DHCP), consolida tudo num único
+// cadastro (o principal) e REMOVE os extras. Reatribui gravações, presets, rotas,
+// agendamentos, snapshots e logs ao principal antes de apagar — nada de footage é perdido.
+// Idempotente: sem duplicatas, não faz nada. Roda dentro de uma transação.
+export function mergeDuplicateCameras(): { removed: number } {
+  const all = listCameras();
+  const byKey = new Map<string, Camera[]>();
+  for (const c of all) {
+    const k = cameraDeviceKey(c);
+    if (k.startsWith('id:')) continue; // sem identidade estável → não mescla
+    const arr = byKey.get(k) ?? [];
+    arr.push(c);
+    byKey.set(k, arr);
+  }
+
+  const groups = Array.from(byKey.values()).filter((g) => g.length > 1);
+  if (!groups.length) return { removed: 0 };
+
+  const db = getDb();
+  // Tabelas com coluna cameraId que devem MIGRAR para o principal (preserva os dados).
+  const reassign = [
+    'recordings',
+    'events',
+    'ptz_presets',
+    'ptz_tours',
+    'recording_schedules',
+    'detection_snapshots',
+    'camera_logs',
+  ];
+  // Tabelas onde cameraId é CHAVE PRIMÁRIA (1 linha por câmera): move só se o principal
+  // ainda não tiver a sua; senão mantém a do principal (a da sombra some no cascade).
+  const pkTables = ['detection_config', 'active_tours'];
+
+  const mergeGroup = db.transaction((group: Camera[]): string[] => {
+    const primary = primaryOfGroup(group);
+    const shadows = group.filter((c) => c.id !== primary.id);
+    for (const sh of shadows) {
+      for (const t of reassign) {
+        db.prepare(`UPDATE ${t} SET cameraId = ? WHERE cameraId = ?`).run(primary.id, sh.id);
+      }
+      for (const t of pkTables) {
+        db.prepare(`UPDATE OR IGNORE ${t} SET cameraId = ? WHERE cameraId = ?`).run(primary.id, sh.id);
+      }
+      db.prepare('DELETE FROM cameras WHERE id = ?').run(sh.id); // cascade limpa o que sobrar
+    }
+    return shadows.map((s) => s.id);
+  });
+
+  let removed = 0;
+  for (const group of groups) {
+    const primary = primaryOfGroup(group);
+    const removedIds = mergeGroup(group);
+    removed += removedIds.length;
+    insertCameraLog(
+      primary.id,
+      primary.name,
+      'warn',
+      `Cadastros duplicados mesclados: ${removedIds.length} removido(s)`,
+      `A mesma câmera física estava cadastrada ${group.length}x (mesma URL/credenciais; IPs: ${group
+        .map((c) => c.ip)
+        .join(', ')}).\n\nNa inicialização, o app consolidou tudo no cadastro principal ("${primary.name}", ${primary.ip}) e removeu os ${removedIds.length} extra(s). Gravações, presets, rotas, agendamentos e logs foram reatribuídos ao principal — nada foi perdido.\n\nAgora há UM cadastro por câmera → UMA puxada RTSP → conexão estável, sem contenção/lag.`,
+      'connectionMonitor',
+    );
+  }
+  return { removed };
 }
