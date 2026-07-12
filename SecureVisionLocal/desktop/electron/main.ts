@@ -163,6 +163,11 @@ if (!gotLock) {
     registerIpcHandlers(() => mainWindow);
     // Encaminha o status dos streams (running/erro) para a UI.
     streamingService.setNotifier((e) => mainWindow?.webContents.send(IPC.evtStreamStatus, e));
+    // Fonte única: a detecção IA consome os quadros da MESMA puxada do StreamingService.
+    streamingService.setDetectionSink(
+      (camera, config, stream) => aiDetectionService.attachStream(camera, config, stream),
+      (cameraId) => aiDetectionService.stop(cameraId),
+    );
     motionDetectionService.setNotifier((ev) => {
       mainWindow?.webContents.send(IPC.evtDetection, ev);
       notifyDetection(ev); // notificação nativa + webhook (respeita as configurações)

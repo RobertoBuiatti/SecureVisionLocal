@@ -2,6 +2,7 @@ import { listCameras } from './cameraRepository';
 import { getDetectionConfig } from './detectionRepository';
 import { motionDetectionService } from './motionDetection';
 import { aiDetectionService } from './ai/aiDetection';
+import { streamingService } from './streaming';
 
 const TICK_MS = 20_000;
 
@@ -40,13 +41,8 @@ class DetectionManager {
       motionDetectionService.stop(cameraId);
     }
 
-    // IA (objetos / incêndio / fumaça)
-    if (config.aiEnabled) {
-      aiDetectionService.stop(cameraId);
-      aiDetectionService.start(camera, config);
-    } else if (aiDetectionService.isActive(cameraId)) {
-      aiDetectionService.stop(cameraId);
-    }
+    // IA: alimentada pela PUXADA ÚNICA do StreamingService (mesma imagem, sem nova sessão).
+    void streamingService.setDetection(camera, config, !!config.aiEnabled);
   }
 
   // Câmeras OFFLINE não são (re)iniciadas — evita respawn de FFmpeg em loop contra
@@ -56,6 +52,8 @@ class DetectionManager {
     for (const camera of listCameras()) {
       const config = getDetectionConfig(camera.id);
       const reachable = camera.status !== 'offline';
+
+      // Movimento: serviço próprio (só sobe quando alcançável, evita respawn em loop).
       if (config.motionEnabled && reachable) {
         if (!motionDetectionService.isActive(camera.id)) {
           motionDetectionService.start(camera, config);
@@ -64,13 +62,9 @@ class DetectionManager {
         motionDetectionService.stop(camera.id);
       }
 
-      if (config.aiEnabled && reachable) {
-        if (!aiDetectionService.isActive(camera.id)) {
-          aiDetectionService.start(camera, config);
-        }
-      } else if (!config.aiEnabled && aiDetectionService.isActive(camera.id)) {
-        aiDetectionService.stop(camera.id);
-      }
+      // IA: alimentada pela puxada única do StreamingService (que já reconecta sozinho,
+      // então não precisa do gate de "offline" — a puxada persiste e se recupera).
+      void streamingService.setDetection(camera, config, !!config.aiEnabled);
     }
   }
 }

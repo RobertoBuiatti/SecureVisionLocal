@@ -1,11 +1,22 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
 import { FFMPEG_PATH } from './ffmpegPath';
 import { hwaccelArgs } from './hwaccel';
 import { isSafeStreamUrl } from './urlGuard';
 import { injectCredentials } from './onvifInfo';
-import { insertCameraLog, describeCamera } from './cameraLogger';
-import type { Camera, StreamInfo } from '../../src/shared/types';
+import { insertCameraLog } from './cameraLogger';
+import { liveFramePath } from './liveFrameCache';
+import { aiDetectVf } from './ai/aiDetection';
+import type { Camera, StreamInfo, DetectionConfig } from '../../src/shared/types';
+
+// Callbacks para a detecção IA consumir os quadros da puxada única (injetados no main).
+type DetectionAttach = (
+  camera: Camera,
+  config: DetectionConfig,
+  stream: NodeJS.ReadableStream,
+) => void;
+type DetectionDetach = (cameraId: string) => void;
 
 const RECONNECT_DELAY_MS = 3000;
 // Faixa de portas dos WebSockets de vídeo. Bind SOMENTE em loopback: o consumidor é o
@@ -147,6 +158,13 @@ interface ActiveStream {
   probeTimer?: ReturnType<typeof setTimeout>;
   probeAttempt: number; // tentativa de probe (para backoff exponencial)
   lowSince?: number; // timestamp quando entrou em low
+  // Fonte única: a MESMA puxada alimenta vários usos, decodificando uma vez só.
+  viewerActive?: boolean; // há visualização ao vivo ativa
+  record?: boolean; // gravar segmentos MP4 desta puxada
+  detect?: boolean; // alimentar a detecção IA com os quadros desta puxada
+  detectConfig?: DetectionConfig;
+  recDir?: string; // diretório dos segmentos de gravação
+  segmentSeconds?: number;
 }
 
 export type StreamStatusEvent = {
@@ -162,37 +180,36 @@ export class StreamingService {
   private streams = new Map<string, ActiveStream>();
   private nextPort = 9100;
   private notifier?: Notifier;
+  private detectionAttach?: DetectionAttach;
+  private detectionDetach?: DetectionDetach;
 
   setNotifier(notifier: Notifier): void {
     this.notifier = notifier;
+  }
+
+  // Injeta como a detecção IA recebe os quadros da puxada única (evita acoplar módulos).
+  setDetectionSink(attach: DetectionAttach, detach: DetectionDetach): void {
+    this.detectionAttach = attach;
+    this.detectionDetach = detach;
+  }
+
+  // Verdadeiro se algo ainda precisa da puxada (visualização, gravação ou detecção).
+  private stillNeeded(state: ActiveStream): boolean {
+    return !!(state.viewerActive || state.record || state.detect);
   }
 
   isActive(cameraId: string): boolean {
     return this.streams.has(cameraId);
   }
 
-  async start(camera: Camera, quality: 'low' | 'high' = 'low'): Promise<StreamInfo> {
+  // Garante a existência do estado + WebSocket da câmera (sem iniciar o FFmpeg ainda).
+  private async ensureState(camera: Camera, quality: 'low' | 'high'): Promise<ActiveStream> {
     const existing = this.streams.get(camera.id);
     if (existing) {
       existing.camera = camera; // atualiza dados (URL/credenciais) se mudaram
-      existing.preferredQuality = quality; // atualiza qualidade preferida
-      // Se estava em failover e a preferida agora é a que está rodando, cancela failover
-      if (existing.failoverActive && existing.quality === quality) {
-        existing.failoverActive = false;
-        if (existing.failoverTimer) {
-          clearTimeout(existing.failoverTimer);
-          existing.failoverTimer = undefined;
-        }
-      }
-      return {
-        cameraId: camera.id,
-        wsPort: existing.wsPort,
-        status: existing.gotData ? 'running' : 'starting',
-      };
+      return existing;
     }
-
     const { wss, wsPort } = await this.listenOnFreePort();
-
     const state: ActiveStream = {
       cameraId: camera.id,
       wsPort,
@@ -210,11 +227,119 @@ export class StreamingService {
       preferredQuality: quality,
       failoverActive: false,
       reconnectCount: 0,
+      viewerActive: false,
+      record: false,
+      detect: false,
     };
     this.streams.set(camera.id, state);
-    this.spawnCameraFfmpeg(state);
     this.startWatchdog(state);
-    return { cameraId: camera.id, wsPort, status: 'starting' };
+    return state;
+  }
+
+  // Visualização ao vivo: anexa um espectador à puxada única (inicia-a se preciso).
+  async start(camera: Camera, quality: 'low' | 'high' = 'high'): Promise<StreamInfo> {
+    const state = await this.ensureState(camera, quality);
+    state.viewerActive = true;
+    state.preferredQuality = quality;
+    if (state.failoverActive && state.quality === quality) {
+      state.failoverActive = false;
+      if (state.failoverTimer) {
+        clearTimeout(state.failoverTimer);
+        state.failoverTimer = undefined;
+      }
+    }
+    if (!state.ffmpeg) this.spawnCameraFfmpeg(state);
+    return {
+      cameraId: camera.id,
+      wsPort: state.wsPort,
+      status: state.gotData ? 'running' : 'starting',
+    };
+  }
+
+  // Espectador saiu: só derruba a puxada se nada mais precisar dela (gravação/detecção).
+  viewerStop(cameraId: string): void {
+    const state = this.streams.get(cameraId);
+    if (!state) return;
+    state.viewerActive = false;
+    if (!this.stillNeeded(state)) this.stop(cameraId);
+  }
+
+  // Liga/desliga a GRAVAÇÃO 24/7 nesta puxada única (segmentos MP4 a partir do mesmo pull).
+  async setRecording(
+    camera: Camera,
+    on: boolean,
+    dir: string,
+    segmentSeconds: number,
+  ): Promise<void> {
+    if (!on) {
+      const st = this.streams.get(camera.id);
+      if (!st || !st.record) return;
+      st.record = false;
+      if (!this.stillNeeded(st)) this.stop(camera.id);
+      else this.reconfigure(st);
+      return;
+    }
+    const st = await this.ensureState(
+      camera,
+      this.streams.get(camera.id)?.preferredQuality ?? 'high',
+    );
+    if (st.record && st.recDir === dir) {
+      if (!st.ffmpeg) this.spawnCameraFfmpeg(st);
+      return; // já gravando neste diretório
+    }
+    st.record = true;
+    st.recDir = dir;
+    st.segmentSeconds = segmentSeconds;
+    this.reconfigure(st);
+  }
+
+  // Liga/desliga a alimentação da DETECÇÃO IA a partir dos quadros desta puxada única.
+  async setDetection(camera: Camera, config: DetectionConfig, on: boolean): Promise<void> {
+    if (!on) {
+      const st = this.streams.get(camera.id);
+      if (!st || !st.detect) return;
+      st.detect = false;
+      st.detectConfig = undefined;
+      this.detectionDetach?.(camera.id);
+      if (!this.stillNeeded(st)) this.stop(camera.id);
+      else this.reconfigure(st);
+      return;
+    }
+    const st = await this.ensureState(
+      camera,
+      this.streams.get(camera.id)?.preferredQuality ?? 'high',
+    );
+    const sameConfig = st.detect && JSON.stringify(st.detectConfig) === JSON.stringify(config);
+    if (sameConfig) {
+      if (!st.ffmpeg) this.spawnCameraFfmpeg(st);
+      return;
+    }
+    st.detect = true;
+    st.detectConfig = config;
+    this.reconfigure(st);
+  }
+
+  // Reinicia o FFmpeg da puxada única para aplicar mudança de saídas (gravação/detecção).
+  private reconfigure(state: ActiveStream): void {
+    if (state.stopping) return;
+    this.detectionDetach?.(state.cameraId); // será reanexada no novo spawn, se ainda ligada
+    if (state.reconnectTimer) {
+      clearTimeout(state.reconnectTimer);
+      state.reconnectTimer = undefined;
+    }
+    const old = state.ffmpeg;
+    state.ffmpeg = null;
+    if (old) {
+      old.removeAllListeners('close');
+      old.removeAllListeners('error');
+      try {
+        old.kill('SIGKILL');
+      } catch {
+        /* noop */
+      }
+    }
+    state.gotData = false;
+    this.spawnCameraFfmpeg(state);
   }
 
   // Atualiza a câmera de um stream em execução (ex.: o IP mudou por DHCP e foi
@@ -344,7 +469,8 @@ export class StreamingService {
     const bitrate = state.quality === 'high' ? '2500k' : '1000k';
     const isLow = state.quality === 'low';
 
-    const args = [
+    // FONTE ÚNICA: uma puxada RTSP, decodificada UMA vez, com várias saídas locais.
+    const inputArgs = [
       ...hwaccelArgs(),
       '-rtsp_transport', 'tcp',
       '-timeout', '10000000',
@@ -358,19 +484,45 @@ export class StreamingService {
       '-max_delay', isLow ? '1000000' : '5000000',
       '-reorder_queue_size', isLow ? '256' : '1000',
       '-i', url,
-      '-f', 'mpegts',
-      '-codec:v', 'mpeg1video',
-      '-vf', `scale=${scale}`,
-      '-b:v', bitrate,
-      '-r', '25',
-      '-bf', '0',
-      '-an',
-      '-q', '1',
-      'pipe:1',
     ];
 
-    const ffmpeg = spawn(FFMPEG_PATH, args);
+    const outputs: string[] = [
+      // Saída 1: vídeo ao vivo (MPEG1) → pipe:1 → WebSocket (jsmpeg).
+      '-map', '0:v:0',
+      '-f', 'mpegts', '-codec:v', 'mpeg1video', '-vf', `scale=${scale}`,
+      '-b:v', bitrate, '-r', '25', '-bf', '0', '-an', '-q', '1', 'pipe:1',
+      // Saída 2: snapshot ao vivo (JPEG 1280) → arquivo, reaproveitado por snapshots/preset.
+      '-map', '0:v:0', '-vf', 'fps=1,scale=1280:-1', '-q:v', '4', '-update', '1', '-y',
+      liveFramePath(state.cameraId),
+    ];
+    if (state.record && state.recDir) {
+      // Saída 3: gravação 24/7 (cópia, qualidade original) → segmentos MP4.
+      outputs.push(
+        '-map', '0:v:0', '-map', '0:a?', '-c:v', 'copy', '-c:a', 'aac',
+        '-f', 'segment', '-segment_time', String(state.segmentSeconds ?? 600),
+        '-segment_format', 'mp4', '-segment_format_options', 'movflags=+faststart',
+        '-reset_timestamps', '1', '-strftime', '1',
+        join(state.recDir, 'seg_%Y%m%d_%H%M%S.mp4'),
+      );
+    }
+    const feedDetect = !!(state.detect && state.detectConfig?.aiEnabled && this.detectionAttach);
+    if (feedDetect) {
+      // Saída 4: quadros RGB para a inferência YOLO → pipe:3 (consumido localmente, no PC).
+      outputs.push('-map', '0:v:0', '-an', '-vf', aiDetectVf(), '-f', 'rawvideo', 'pipe:3');
+    }
+
+    const args = [...inputArgs, ...outputs];
+    const stdio: Array<'ignore' | 'pipe'> = feedDetect
+      ? ['ignore', 'pipe', 'pipe', 'pipe']
+      : ['ignore', 'pipe', 'pipe'];
+    const ffmpeg = spawn(FFMPEG_PATH, args, { stdio });
     state.ffmpeg = ffmpeg;
+
+    // Entrega os quadros da MESMA puxada para a detecção IA (sem abrir outra sessão).
+    if (feedDetect && state.camera && state.detectConfig) {
+      const detStream = ffmpeg.stdio[3] as NodeJS.ReadableStream | undefined;
+      if (detStream) this.detectionAttach?.(state.camera, state.detectConfig, detStream);
+    }
 
     // Captura stderr do FFmpeg para diagnóstico (RTSP errors, etc.)
     let stderrBuf = '';
@@ -729,6 +881,7 @@ const probe = spawn(FFMPEG_PATH, probeArgs, { stdio: ['ignore', 'ignore', 'pipe'
     if (stream.watchdog) clearInterval(stream.watchdog);
     if (stream.failoverTimer) clearTimeout(stream.failoverTimer);
     if (stream.probeTimer) clearTimeout(stream.probeTimer);
+    this.detectionDetach?.(cameraId); // encerra a detecção alimentada por esta puxada
     this.streams.delete(cameraId);
     const camera = stream.camera;
     const name = camera?.name || cameraId;

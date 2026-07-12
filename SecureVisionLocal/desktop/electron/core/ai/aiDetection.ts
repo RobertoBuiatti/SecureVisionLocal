@@ -49,10 +49,16 @@ const RECORD_STOP_DELAY_MS = 12000;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Session = any;
 
+// Filtro FFmpeg que produz os quadros que a inferência YOLO espera (RGB quadrado).
+// Exposto para o StreamingService montar a MESMA saída na puxada única da câmera.
+export function aiDetectVf(): string {
+  return `fps=1.5,scale=${YOLO_INPUT}:${YOLO_INPUT},format=rgb24`;
+}
+
 interface CamState {
   camera: Camera;
   config: DetectionConfig;
-  ffmpeg: ChildProcessWithoutNullStreams;
+  ffmpeg: ChildProcessWithoutNullStreams | null; // null quando os quadros vêm de fonte externa
   buffer: Buffer;
   busy: boolean;
   lastEventAt: Record<string, number>;
@@ -147,6 +153,29 @@ export class AiDetectionService {
     this.active.set(camera.id, state);
   }
 
+  // Consome quadros RGB de uma fonte EXTERNA (a puxada única do StreamingService),
+  // em vez de abrir a própria sessão RTSP. A detecção usa a MESMA imagem já
+  // decodificada — sem puxar a câmera/rede de novo.
+  attachStream(camera: Camera, config: DetectionConfig, stream: NodeJS.ReadableStream): void {
+    this.stop(camera.id); // encerra qualquer sessão própria anterior
+    const state: CamState = {
+      camera,
+      config,
+      ffmpeg: null,
+      buffer: Buffer.alloc(0),
+      busy: false,
+      lastEventAt: {},
+      recordStopTimer: null,
+      recording: false,
+      tracking: false,
+      trackUntil: 0,
+      trackMonitor: null,
+      resumeTourId: null,
+    };
+    this.active.set(camera.id, state);
+    stream.on('data', (chunk: Buffer) => this.onData(camera.id, chunk));
+  }
+
   stop(cameraId: string): void {
     const state = this.active.get(cameraId);
     if (!state) return;
@@ -154,7 +183,7 @@ export class AiDetectionService {
     if (state.recordStopTimer) clearTimeout(state.recordStopTimer);
     if (state.tracking) this.stopTracking(state);
     try {
-      state.ffmpeg.kill('SIGKILL');
+      state.ffmpeg?.kill('SIGKILL');
     } catch {
       /* noop */
     }

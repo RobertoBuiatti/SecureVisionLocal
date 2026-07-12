@@ -23,7 +23,7 @@ interface ActiveContinuous {
   ffmpeg: ChildProcess;
 }
 
-function cameraDir(cameraId: string): string {
+export function recordingCameraDir(cameraId: string): string {
   const dir = join(getSettings().recordingsPath, cameraId);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   return dir;
@@ -60,7 +60,7 @@ export class ContinuousRecordingService {
       return;
     }
 
-    const dir = cameraDir(camera.id);
+    const dir = recordingCameraDir(camera.id);
     const segmentSeconds = Math.max(1, getSettings().continuousSegmentMinutes) * 60;
     const pattern = join(dir, `${SEGMENT_PREFIX}%Y%m%d_%H%M%S.mp4`);
 
@@ -156,6 +156,67 @@ export class ContinuousRecordingService {
     for (const [cameraId, item] of this.active) {
       this.syncCamera(cameraId, item.dir);
     }
+  }
+
+  // Indexa no banco os segmentos MP4 de um diretório — usado quando a GRAVAÇÃO é
+  // escrita pela puxada única do StreamingService (não pelo FFmpeg deste serviço).
+  // `activelyRecording` marca o último segmento como "em gravação".
+  indexSegments(
+    cameraId: string,
+    cameraName: string | undefined,
+    dir: string,
+    activelyRecording: boolean,
+  ): void {
+    if (!existsSync(dir)) return;
+    const files = readdirSync(dir)
+      .filter((f) => f.startsWith(SEGMENT_PREFIX) && f.endsWith('.mp4'))
+      .sort();
+    if (files.length === 0) return;
+    const lastFile = files[files.length - 1];
+
+    files.forEach((file) => {
+      const filePath = join(dir, file);
+      let size = 0;
+      let mtime = Date.now();
+      try {
+        const st = statSync(filePath);
+        size = st.size;
+        mtime = st.mtimeMs;
+      } catch {
+        return;
+      }
+      const isActiveSegment = file === lastFile && activelyRecording;
+      const existing = findByFilePath(filePath);
+      if (!existing) {
+        const startTime = parseSegmentTime(file);
+        insertRecording({
+          id: `rec_${randomUUID().slice(0, 8)}`,
+          cameraId,
+          cameraName,
+          type: 'continuous',
+          status: isActiveSegment ? 'recording' : 'completed',
+          startTime,
+          endTime: isActiveSegment ? null : Math.round(mtime),
+          duration: isActiveSegment ? 0 : Math.max(0, Math.round((mtime - startTime) / 1000)),
+          fileSize: size,
+          filePath,
+          hasMotion: false,
+        });
+      } else if (existing.status === 'recording' && !isActiveSegment) {
+        finalizeRecording(existing.id, {
+          endTime: Math.round(mtime),
+          duration: Math.max(0, Math.round((mtime - existing.startTime) / 1000)),
+          fileSize: size,
+          status: 'completed',
+        });
+      }
+    });
+  }
+
+  // Finaliza segmentos que ficaram 'recording' (público p/ o RecordingManager chamar
+  // quando a gravação de uma câmera é desligada).
+  finalize(cameraId: string): void {
+    this.finalizeOpenSegments(cameraId);
   }
 
   private syncCamera(cameraId: string, dir: string): void {

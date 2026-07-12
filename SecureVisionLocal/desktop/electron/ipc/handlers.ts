@@ -142,7 +142,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     // Sempre tenta alta qualidade primeiro; failover automático para low se cair
     return streamingService.start(camera, 'high');
   });
-  ipcMain.handle(IPC.streamStop, (_e, cameraId: string) => streamingService.stop(cameraId));
+  ipcMain.handle(IPC.streamStop, (_e, cameraId: string) => streamingService.viewerStop(cameraId));
 
   // ---- Gravação ----
   ipcMain.handle(IPC.recordingStart, (_e, cameraId: string) => {

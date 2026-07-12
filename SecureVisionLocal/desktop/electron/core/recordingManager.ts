@@ -1,9 +1,10 @@
 import type { Camera } from '../../src/shared/types';
 import { listCameras } from './cameraRepository';
-import { continuousRecordingService } from './continuousRecording';
+import { continuousRecordingService, recordingCameraDir } from './continuousRecording';
+import { streamingService } from './streaming';
+import { getSettings } from './settings';
 import { enforceRetention } from './retention';
 import { scheduleManager } from './scheduleManager';
-import { insertCameraLog } from './cameraLogger';
 
 // Uma câmera deve gravar continuamente se estiver marcada como 24/7 OU se estiver
 // dentro de uma janela de agendamento ativa neste momento.
@@ -27,23 +28,30 @@ class RecordingManager {
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
-    continuousRecordingService.stopAll();
   }
 
-  // Liga/desliga a gravação contínua de uma câmera específica (resposta imediata
-  // quando o usuário ativa/desativa "Gravar 24/7").
+  private segmentSeconds(): number {
+    return Math.max(1, getSettings().continuousSegmentMinutes) * 60;
+  }
+
+  // Liga/desliga a gravação 24/7 de uma câmera (resposta imediata ao usuário).
+  // A gravação é uma SAÍDA da puxada única do StreamingService — não abre sessão nova.
   applyCamera(camera: Camera): void {
-    const shouldRecord = shouldRecordContinuous(camera);
-    if (shouldRecord && !continuousRecordingService.isActive(camera.id)) {
-      continuousRecordingService.start(camera);
-    } else if (!shouldRecord && continuousRecordingService.isActive(camera.id)) {
-      continuousRecordingService.stop(camera.id);
+    if (shouldRecordContinuous(camera)) {
+      void streamingService.setRecording(
+        camera,
+        true,
+        recordingCameraDir(camera.id),
+        this.segmentSeconds(),
+      );
+    } else {
+      void streamingService.setRecording(camera, false, '', 0);
+      continuousRecordingService.finalize(camera.id);
     }
   }
 
   private tick(): void {
     this.reconcile();
-    continuousRecordingService.sync();
     try {
       enforceRetention();
     } catch {
@@ -51,28 +59,18 @@ class RecordingManager {
     }
   }
 
-  // Garante que o conjunto em gravação corresponde às câmeras marcadas como 24/7.
-  // Câmeras cujo FFmpeg morreu voltam a ser iniciadas aqui (auto-restart).
-  // Câmeras OFFLINE (segundo o monitor de conexão) não são reiniciadas — evita
-  // respawn de FFmpeg em loop contra uma câmera inacessível (desperdício de CPU).
-  // Quando a câmera volta, o monitor a marca online e o próximo ciclo religa tudo.
+  // Mantém a gravação 24/7 pedida como SAÍDA da puxada única (o StreamingService cuida
+  // de reconexão/failover) e indexa os segmentos gravados. Não há mais "pular offline":
+  // a puxada persiste e se recupera sozinha.
   private reconcile(): void {
     for (const camera of listCameras()) {
+      const dir = recordingCameraDir(camera.id);
       if (shouldRecordContinuous(camera)) {
-        if (camera.status === 'offline') {
-          insertCameraLog(
-            camera.id,
-            camera.name,
-            'warn',
-            `Gravação 24/7 de "${camera.name}" pulada — câmera offline`,
-            `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\n\nA câmera está marcada como offline. A gravação contínua será ignorada até que a conexão seja restabelecida. Isso evita respawn infinito de FFmpeg contra uma câmera inacessível.`,
-            'recording',
-          );
-        } else if (!continuousRecordingService.isActive(camera.id)) {
-          continuousRecordingService.start(camera);
-        }
-      } else if (!shouldRecordContinuous(camera) && continuousRecordingService.isActive(camera.id)) {
-        continuousRecordingService.stop(camera.id);
+        void streamingService.setRecording(camera, true, dir, this.segmentSeconds());
+        continuousRecordingService.indexSegments(camera.id, camera.name, dir, true);
+      } else {
+        void streamingService.setRecording(camera, false, '', 0);
+        continuousRecordingService.indexSegments(camera.id, camera.name, dir, false);
       }
     }
   }
