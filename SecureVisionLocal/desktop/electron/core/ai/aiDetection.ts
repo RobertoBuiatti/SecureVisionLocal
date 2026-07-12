@@ -32,6 +32,7 @@ import { tourRunner } from '../tourRunner';
 import { getTour } from '../ptzRepository';
 import { getSettings } from '../settings';
 import { injectCredentials } from '../onvifInfo';
+import { liveFramePath } from '../liveFrameCache';
 import { ensureModel, isModelReady, resolveModelPath, type ModelKey } from './modelManager';
 import { preprocess, decode, nms, cocoToCategory, YOLO_INPUT, type Detection } from './yolo';
 import { captureDetectionSnapshot } from './detectionSnapshotCapture';
@@ -106,13 +107,22 @@ export class AiDetectionService {
     if (this.active.has(camera.id)) return;
     const rawUrl = camera.subStreamUrl || camera.streamUrl;
     const url = injectCredentials(rawUrl, camera.username, camera.password);
+    // Quadro ao vivo reaproveitado por snapshots/preset (evita nova sessão RTSP).
+    const framePath = liveFramePath(camera.id);
     const args = [
       '-rtsp_transport', 'tcp',
       '-i', url,
       '-an',
+      // Saída 1: quadros RGB para a inferência YOLO (via pipe).
       '-vf', `fps=1.5,scale=${YOLO_INPUT}:${YOLO_INPUT},format=rgb24`,
       '-f', 'rawvideo',
       'pipe:1',
+      // Saída 2: JPEG ao vivo (~1fps, 1280px) sobrescrito continuamente, reaproveitado
+      // pelos snapshots e captura de preset para NÃO abrir outra sessão RTSP na câmera.
+      '-vf', 'fps=1,scale=1280:-1',
+      '-q:v', '4',
+      '-update', '1',
+      '-y', framePath,
     ];
     const ffmpeg = spawn(FFMPEG_PATH, args);
     const state: CamState = {

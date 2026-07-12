@@ -7,6 +7,7 @@ import { recordingService } from './recording';
 import { captureDetectionSnapshot } from './ai/detectionSnapshotCapture';
 import { getSettings } from './settings';
 import { injectCredentials } from './onvifInfo';
+import { liveFramePath } from './liveFrameCache';
 
 const W = 320;
 const H = 180;
@@ -49,13 +50,24 @@ export class MotionDetectionService {
     if (this.active.has(camera.id)) return;
     const rawUrl = camera.subStreamUrl || camera.streamUrl;
     const url = injectCredentials(rawUrl, camera.username, camera.password);
+    // Caminho do quadro ao vivo reaproveitado por snapshots/preset (getLiveFramesDir()
+    // garante que o diretório exista antes do FFmpeg tentar gravar).
+    const framePath = liveFramePath(camera.id);
     const args = [
       '-rtsp_transport', 'tcp',
       '-i', url,
       '-an',
+      // Saída 1: quadros cinza 320x180 @3fps para a ANÁLISE de movimento (via pipe).
       '-vf', `fps=3,scale=${W}:${H},format=gray`,
       '-f', 'rawvideo',
       'pipe:1',
+      // Saída 2: um JPEG ao vivo (~1fps, colorido, 1280px) sobrescrito continuamente.
+      // Reaproveitado pelos snapshots e pela captura de preset para NÃO abrir uma nova
+      // sessão RTSP na câmera (principal causa de saturação/quedas nesta instalação).
+      '-vf', 'fps=1,scale=1280:-1',
+      '-q:v', '4',
+      '-update', '1',
+      '-y', framePath,
     ];
     const ffmpeg = spawn(FFMPEG_PATH, args);
     const state: MotionState = {

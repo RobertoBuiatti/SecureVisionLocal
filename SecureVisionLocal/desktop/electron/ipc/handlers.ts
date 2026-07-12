@@ -241,10 +241,15 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     await new Promise((r) => setTimeout(r, 1500));
     // Tenta capturar snapshot para referência visual.
     // Se falhar, AINDA SALVA O PRESET (só fica sem imagem de referência).
-    const snapPath = join(presetsSnapshotDir(), `${Date.now()}_${name}.jpg`);
+    // Sanitiza o nome no arquivo: texto livre do usuário pode conter caracteres
+    // inválidos no Windows (\ / : * ? " < > |) e impedir o FFmpeg de gravar o JPEG.
+    const safeName = name.replace(/[^\p{L}\p{N}_-]/gu, '_').slice(0, 40) || 'preset';
+    const snapPath = join(presetsSnapshotDir(), `${Date.now()}_${safeName}.jpg`);
     let captured = false;
     for (let attempt = 0; attempt < 3; attempt++) {
-      const ok = await captureJpeg(camera, snapPath, true);
+      // Referência de preset: prioriza confiabilidade (quadro ao vivo em cache / sub-stream)
+      // em vez de abrir nova sessão no main-stream, que satura a câmera.
+      const ok = await captureJpeg(camera, snapPath, false);
       if (ok) {
         captured = true;
         break;
@@ -282,7 +287,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     if (!ok) return null;
     // Re-captura o snapshot de referência da posição atual.
     const snapPath = join(presetsSnapshotDir(), `${preset.id}.jpg`);
-    const captured = await captureJpeg(camera, snapPath, true); // preset: prioriza stream principal
+    const captured = await captureJpeg(camera, snapPath, false); // preset: reaproveita quadro ao vivo / sub-stream
     if (captured) {
       setPresetSnapshot(preset.id, snapPath);
       preset.snapshotPath = snapPath;
@@ -337,7 +342,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     const camera = getCamera(preset.cameraId);
     if (!camera) return null;
     const snapPath = join(presetsSnapshotDir(), `${preset.id}.jpg`);
-    const captured = await captureJpeg(camera, snapPath, true);
+    const captured = await captureJpeg(camera, snapPath, false); // reaproveita quadro ao vivo / sub-stream
     if (captured) {
       setPresetSnapshot(preset.id, snapPath);
       preset.snapshotPath = snapPath;

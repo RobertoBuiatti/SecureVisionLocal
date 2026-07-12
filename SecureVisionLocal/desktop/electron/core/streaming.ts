@@ -316,12 +316,15 @@ export class StreamingService {
       ...hwaccelArgs(),
       '-rtsp_transport', 'tcp',
       '-timeout', '10000000',
-      '-fflags', isLow ? 'nobuffer+igndts+discardcorrupt' : 'nobuffer',
+      // discardcorrupt: descarta pacotes corrompidos (comuns em WiFi) em vez de travar
+      // o decoder. reorder_queue_size > 0 tolera reordenação de pacotes RTP (o valor 0
+      // fazia qualquer reordenação virar "corrupção" e disparar stall/reconexão em WiFi).
+      '-fflags', isLow ? 'nobuffer+igndts+discardcorrupt' : 'nobuffer+discardcorrupt',
       '-flags', 'low_delay',
       '-analyzeduration', isLow ? '1000000' : '5000000',
       '-probesize', isLow ? '500000' : '5000000',
-      '-max_delay', isLow ? '500000' : '5000000',
-      '-reorder_queue_size', isLow ? '0' : '1000',
+      '-max_delay', isLow ? '1000000' : '5000000',
+      '-reorder_queue_size', isLow ? '256' : '1000',
       '-i', url,
       '-f', 'mpegts',
       '-codec:v', 'mpeg1video',

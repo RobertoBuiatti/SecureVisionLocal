@@ -3,7 +3,9 @@ import type { Camera, ConnectionTestResult } from '../../src/shared/types';
 import { insertCameraLog, describeCamera } from './cameraLogger';
 
 // Testa a conectividade TCP até a porta da câmera (RTSP/ONVIF/HTTP) e mede latência.
-export function testConnection(camera: Camera, timeoutMs = 4000): Promise<ConnectionTestResult> {
+// Timeout generoso (9s): em WiFi + câmera saturada (poucas sessões RTSP), um teste de
+// 4s dava falso "offline" com frequência mesmo com a câmera acessível.
+export function testConnection(camera: Camera, timeoutMs = 9000): Promise<ConnectionTestResult> {
   return new Promise((resolve) => {
     const start = Date.now();
     const socket = createConnection({ host: camera.ip, port: camera.port });

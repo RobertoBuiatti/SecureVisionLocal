@@ -27,3 +27,10 @@ export function getDefaultRecordingsDir(): string {
 export function getThumbnailsDir(): string {
   return ensureDir(join(getDataDir(), 'thumbnails'));
 }
+
+// Diretório onde o pipeline de detecção grava o último quadro ao vivo de cada câmera
+// (um JPEG por câmera). Snapshots e captura de preset reaproveitam esse arquivo em vez
+// de abrir uma nova sessão RTSP — reduz a carga de conexões simultâneas na câmera.
+export function getLiveFramesDir(): string {
+  return ensureDir(join(getDataDir(), 'liveframes'));
+}

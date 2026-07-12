@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { statSync } from 'node:fs';
+import { statSync, copyFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { mkdirSync, existsSync } from 'node:fs';
 import { FFMPEG_PATH } from './ffmpegPath';
@@ -7,6 +7,7 @@ import { insertCameraLog } from './cameraLogger';
 import type { Camera } from '../../src/shared/types';
 import { getThumbnailsDir } from './paths';
 import { injectCredentials } from './onvifInfo';
+import { freshLiveFrame } from './liveFrameCache';
 
 // Resolução (quadrado, cinza) em que os quadros são analisados. Maior que o necessário
 // para a comparação da imagem inteira, de propósito: dá detalhe suficiente para os
@@ -21,51 +22,94 @@ export function presetsSnapshotDir(): string {
 }
 
 // Captura um único quadro JPEG da câmera para o caminho indicado.
-// Tenta até 3 vezes com intervalo de 500ms entre tentativas, porque a
-// câmera pode estar momentaneamente ocupada (ex.: após salvar um preset).
+//
+// Estratégia (ordem depende de `preferHighQuality`):
+//  1. REAPROVEITAR o último quadro ao vivo já decodificado pelo pipeline de detecção
+//     (arquivo local) — evita abrir uma NOVA sessão RTSP na câmera, que é a principal
+//     causa de saturação/quedas em câmeras com poucas sessões (ex.: Xiongmai) sobre WiFi.
+//  2. Só se não houver quadro recente, abre o FFmpeg direto no RTSP (sub-stream com
+//     várias tentativas; main-stream 1x). Com `preferHighQuality`, tenta o main 1x ANTES
+//     do cache para honrar "HD quando possível", caindo para cache/sub se falhar.
 export async function captureJpeg(camera: Camera, outPath: string, preferHighQuality = false): Promise<boolean> {
-  const primaryUrl = preferHighQuality ? camera.streamUrl : camera.subStreamUrl;
-  const fallbackUrl = preferHighQuality ? camera.subStreamUrl : camera.streamUrl;
-  const rawUrls = [primaryUrl, fallbackUrl].filter(Boolean) as string[];
-  const urls = rawUrls.map((u) => injectCredentials(u, camera.username, camera.password));
-  
-  for (let urlIndex = 0; urlIndex < urls.length; urlIndex++) {
-    const url = urls[urlIndex];
-    // Na URL principal tenta 1x; na fallback tenta 3x
-    const maxAttempts = urlIndex === 0 ? 1 : 3;
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const ok = await snapOne(url, outPath);
-      if (ok) {
-        let fileSize = 0;
-        try { fileSize = statSync(outPath).size; } catch { /* noop */ }
-        insertCameraLog(
-          camera.id,
-          camera.name,
-          'info',
-          `Snapshot de "${camera.name}" capturado (${Math.round(fileSize / 1024)}KB)`,
-          `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nArquivo: ${outPath}\nTamanho: ${Math.round(fileSize / 1024)}KB\nURL: ${url.replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nTentativa: ${attempt + 1}/${maxAttempts}`,
-          'snapshot',
-        );
+  const mainUrl = camera.streamUrl
+    ? injectCredentials(camera.streamUrl, camera.username, camera.password)
+    : null;
+  const subUrl = camera.subStreamUrl
+    ? injectCredentials(camera.subStreamUrl, camera.username, camera.password)
+    : null;
+
+  const logSuccess = (via: string, url?: string): void => {
+    let fileSize = 0;
+    try { fileSize = statSync(outPath).size; } catch { /* noop */ }
+    insertCameraLog(
+      camera.id,
+      camera.name,
+      'info',
+      `Snapshot de "${camera.name}" capturado (${Math.round(fileSize / 1024)}KB)`,
+      `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nArquivo: ${outPath}\nTamanho: ${Math.round(fileSize / 1024)}KB\nOrigem: ${via}${url ? `\nURL: ${url.replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}` : ''}`,
+      'snapshot',
+    );
+  };
+
+  // 1) Quadro ao vivo em cache (recente). Copia direto, sem tocar na câmera.
+  const tryCachedFrame = (): boolean => {
+    const cached = freshLiveFrame(camera.id);
+    if (!cached) return false;
+    try {
+      copyFileSync(cached, outPath);
+      logSuccess('quadro ao vivo reaproveitado (sem nova conexão RTSP)');
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  type Strat =
+    | { kind: 'cache' }
+    | { kind: 'rtsp'; url: string; tries: number; label: string };
+  const strategies: Strat[] = [];
+  if (preferHighQuality) {
+    if (mainUrl) strategies.push({ kind: 'rtsp', url: mainUrl, tries: 1, label: 'main' });
+    strategies.push({ kind: 'cache' });
+    if (subUrl) strategies.push({ kind: 'rtsp', url: subUrl, tries: 5, label: 'sub' });
+  } else {
+    strategies.push({ kind: 'cache' });
+    if (subUrl) strategies.push({ kind: 'rtsp', url: subUrl, tries: 5, label: 'sub' });
+    if (mainUrl) strategies.push({ kind: 'rtsp', url: mainUrl, tries: 1, label: 'main' });
+  }
+
+  let lastStderr = '';
+  for (const strat of strategies) {
+    if (strat.kind === 'cache') {
+      if (tryCachedFrame()) return true;
+      continue;
+    }
+    for (let attempt = 0; attempt < strat.tries; attempt++) {
+      const res = await snapOne(strat.url, outPath);
+      if (res.ok) {
+        logSuccess(`RTSP (${strat.label}), tentativa ${attempt + 1}/${strat.tries}`, strat.url);
         return true;
       }
-      if (attempt < maxAttempts - 1) await new Promise((r) => setTimeout(r, 500));
+      if (res.stderr) lastStderr = res.stderr;
+      if (attempt < strat.tries - 1) await new Promise((r) => setTimeout(r, 500));
     }
   }
+
   insertCameraLog(
     camera.id,
     camera.name,
     'error',
     `Falha ao capturar snapshot de "${camera.name}" após múltiplas tentativas`,
-    `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nUsuário: ${camera.username || '—'}\nURL principal: ${(camera.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nURL secundária: ${(camera.subStreamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nCaminho de saída: ${outPath}\n\nTentou main stream 1x, sub-stream 3x. O FFmpeg retornou código de erro em todas. Verifique se a câmera está acessível e a URL de stream está correta.`,
+    `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nUsuário: ${camera.username || '—'}\nURL principal: ${(camera.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nURL secundária: ${(camera.subStreamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nCaminho de saída: ${outPath}\n\nSem quadro ao vivo em cache e o FFmpeg retornou erro em todas as tentativas RTSP. Verifique se a câmera está acessível e a URL de stream está correta.${lastStderr ? `\n\n--- stderr FFmpeg ---\n${lastStderr.slice(0, 1500)}` : ''}`,
     'snapshot',
   );
   return false;
 }
 
-function snapOne(url: string, outPath: string): Promise<boolean> {
+function snapOne(url: string, outPath: string): Promise<{ ok: boolean; stderr: string }> {
   const args = [
     '-rtsp_transport', 'tcp',
-    '-timeout', '3000000',
+    '-timeout', '8000000',
     '-i', url,
     '-frames:v', '1',
     '-q:v', '3',
@@ -74,18 +118,18 @@ function snapOne(url: string, outPath: string): Promise<boolean> {
   return run(args);
 }
 
-function run(args: string[]): Promise<boolean> {
+function run(args: string[]): Promise<{ ok: boolean; stderr: string }> {
   return new Promise((resolve) => {
     const ff = spawn(FFMPEG_PATH, args, { stdio: ['ignore', 'ignore', 'pipe'] });
     const stderrChunks: Buffer[] = [];
     ff.stderr?.on('data', (c: Buffer) => stderrChunks.push(c));
-    ff.on('error', () => resolve(false));
+    ff.on('error', (err) => resolve({ ok: false, stderr: err?.message || 'spawn error' }));
     ff.on('close', (code) => {
+      const stderr = Buffer.concat(stderrChunks).toString('utf-8').trim();
       if (code !== 0) {
-        const stderr = Buffer.concat(stderrChunks).toString('utf-8').trim();
         console.warn(`[snapshotService] FFmpeg falhou (code ${code}): ${stderr.slice(0, 500)}`);
       }
-      resolve(code === 0);
+      resolve({ ok: code === 0, stderr });
     });
   });
 }
