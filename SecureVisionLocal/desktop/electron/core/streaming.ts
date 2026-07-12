@@ -17,9 +17,12 @@ const WS_PORT_MAX = 9400;
 const STALL_TIMEOUT_MS = { high: 30000, low: 45000 };
 const WATCHDOG_INTERVAL_MS = 3000; // frequência de checagem do travamento
 const MAX_STALLS_BEFORE_FAILOVER = 3; // quantos stalls consecutivos em high antes de cair p/ low
-const MIN_TIME_IN_LOW_MS = 60_000; // fica no low pelo menos 60s antes de tentar voltar
+// Probe de restauração do HD deliberadamente LENTO: em câmera 8MP via WiFi o HD raramente
+// estabiliza, e cada probe abre uma sessão 8MP que satura a rede. Espaçar bastante evita
+// que o probe atrapalhe o vídeo/gravação. (Antes: 60s / 30s → agressivo demais.)
+const MIN_TIME_IN_LOW_MS = 300_000; // fica no low ao menos 5min antes de tentar voltar ao HD
 const PROBE_STABLE_MS = 10_000; // probe no high deve ficar estável 10s antes de confirmar troca
-const PROBE_RETRY_BASE_MS = 30_000; // base para backoff exponencial se probe falhar
+const PROBE_RETRY_BASE_MS = 300_000; // base do backoff se o probe falhar (5min, 10min, 20min…)
 
 // Caminhos RTSP alternativos para câmeras cujo ONVIF retorna URL genérica (apenas "/").
 // Muitas marcas (Xiongmai, Hikvision, Intelbras/Dahua, TP-Link, Reolink, Foscam,
