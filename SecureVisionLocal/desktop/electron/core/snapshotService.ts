@@ -187,6 +187,41 @@ export async function captureGrayFrameMedian(
   return out;
 }
 
+// Captura um quadro cinza EXCLUSIVAMENTE da PUXADA ÚNICA (liveFrame compartilhado). É a
+// mesma fonte que alimenta vídeo/gravação/detecção — a verificação/autoajuste de posição
+// vira "mais uma consumidora da conexão única". CONEXÃO ÚNICA ESTRITA: se a puxada não
+// tiver quadro fresco, retorna null e NÃO abre nenhuma sessão RTSP nova (o chamador
+// registra o motivo e trata como INDETERMINADO). Amostra N leituras espaçadas do
+// liveFrame (atualizado a ~1fps) e tira a mediana por pixel.
+export async function captureGrayFromLive(cameraId: string, samples = 3): Promise<Buffer | null> {
+  const frames: Buffer[] = [];
+  for (let i = 0; i < samples; i++) {
+    const path = freshLiveFrame(cameraId);
+    if (!path) break; // puxada sem quadro fresco → NÃO abre RTSP; retorna o que tiver (ou null)
+    // eslint-disable-next-line no-await-in-loop
+    const f = await captureGrayFrame(path, true);
+    if (f) frames.push(f);
+    // Espaça as leituras para a puxada (≈1fps) reescrever o arquivo entre amostras.
+    // eslint-disable-next-line no-await-in-loop
+    if (i < samples - 1) await new Promise((r) => setTimeout(r, 450));
+  }
+
+  if (frames.length === 1) return frames[0];
+  if (frames.length > 1) {
+    const out = Buffer.alloc(GRID * GRID);
+    const mid = Math.floor(frames.length / 2);
+    const vals: number[] = new Array(frames.length);
+    for (let p = 0; p < GRID * GRID; p++) {
+      for (let k = 0; k < frames.length; k++) vals[k] = frames[k][p];
+      vals.sort((a, b) => a - b);
+      out[p] = vals[mid];
+    }
+    return out;
+  }
+
+  return null; // sem quadro fresco da puxada única — não tentamos RTSP por design
+}
+
 // Recorte central de um quadro quadrado (lado `side`), pegando a fração `f` (0..1) do
 // centro. Ex.: f=0.5 devolve o quarto central. Usado na autocorreção multi-escala: a
 // imagem inteira posiciona grosso, recortes menores afinam (mais sensíveis a desvio).

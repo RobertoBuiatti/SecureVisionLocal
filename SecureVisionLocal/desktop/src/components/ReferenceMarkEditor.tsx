@@ -30,6 +30,7 @@ export function ReferenceMarkEditor({ presetId, presetName, onClose }: Reference
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [detecting, setDetecting] = useState(false);
+  const [detectMsg, setDetectMsg] = useState<string | null>(null);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dragPoint, setDragPoint] = useState<number | null>(null);
 
@@ -245,6 +246,7 @@ export function ReferenceMarkEditor({ presetId, presetName, onClose }: Reference
 
   async function handleAutoDetect() {
     setDetecting(true);
+    setDetectMsg(null);
     try {
       const features = await window.svl.ptz.detectFeatures(presetId);
       const newMarks: DraftMark[] = features.map((f) => ({
@@ -254,9 +256,19 @@ export function ReferenceMarkEditor({ presetId, presetName, onClose }: Reference
         expectedDistanceTop: f.expectedDistanceTop,
         tolerance: f.tolerance,
       }));
-      setMarks((prev) => [...prev, ...newMarks]);
+      if (newMarks.length === 0) {
+        // Antes isso falhava em silêncio. Agora explica o motivo mais provável.
+        setDetectMsg(
+          snapshotUrl
+            ? 'Nenhuma marca detectada (imagem com pouca textura). Desenhe linhas/zonas manualmente.'
+            : 'Sem imagem de referência. Recapture o snapshot do preset ("Salvar posição" ou "Recapturar") e tente de novo.',
+        );
+      } else {
+        setMarks((prev) => [...prev, ...newMarks]);
+      }
     } catch (e) {
       console.error('Erro ao detectar features:', e);
+      setDetectMsg('Erro ao auto-detectar marcas. Verifique os logs da câmera.');
     } finally {
       setDetecting(false);
     }
@@ -345,6 +357,7 @@ export function ReferenceMarkEditor({ presetId, presetName, onClose }: Reference
                 ✕ Limpar todas
               </button>
             </div>
+            {detectMsg && <p className="probe-msg">{detectMsg}</p>}
           </div>
 
           <div className="ref-marks-panel">

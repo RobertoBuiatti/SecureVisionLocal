@@ -269,7 +269,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     const preset = addPreset(cameraId, name, token, captured ? snapPath : undefined);
     // Embedding AI de referência (best-effort)
     const aiUrl = camera.subStreamUrl || camera.streamUrl;
-    computeAndSaveReferenceEmbedding(aiUrl, preset.id).catch(() => {});
+    computeAndSaveReferenceEmbedding(camera.id, aiUrl, preset.id).catch(() => {});
     return preset;
   });
   ipcMain.handle(IPC.ptzListPresets, (_e, cameraId: string) => listPresets(cameraId));
@@ -293,7 +293,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
       preset.snapshotPath = snapPath;
       // Re-computa embedding AI para a nova referência
       const aiUrl = camera.subStreamUrl || camera.streamUrl;
-      computeAndSaveReferenceEmbedding(aiUrl, preset.id).catch(() => {});
+      computeAndSaveReferenceEmbedding(camera.id, aiUrl, preset.id).catch(() => {});
     }
     return getPreset(presetId); // retorna dados atualizados do DB
   });
@@ -348,7 +348,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
       preset.snapshotPath = snapPath;
       // Re-gera embedding AI (best-effort)
       const aiUrl = camera.subStreamUrl || camera.streamUrl;
-      computeAndSaveReferenceEmbedding(aiUrl, preset.id).catch(() => {});
+      computeAndSaveReferenceEmbedding(camera.id, aiUrl, preset.id).catch(() => {});
     }
     return getPreset(presetId);
   });
@@ -371,8 +371,11 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   );
   ipcMain.handle(IPC.ptzDetectFeatures, async (_e, presetId: string) => {
     const preset = getPreset(presetId);
-    if (!preset) return [];
-    return detectFeatures(presetId);
+    // Sem imagem de referência (snapshotPath) não há o que detectar. Ler o caminho REAL
+    // do preset (não reconstruir por id) — presets criados via "Salvar posição" gravam
+    // com nome ${timestamp}_${nome}.jpg, não ${presetId}.jpg.
+    if (!preset?.snapshotPath) return [];
+    return detectFeatures(preset.snapshotPath);
   });
 
   // ---- Detection Snapshots ----

@@ -69,6 +69,21 @@ export function getCamera(id: string): Camera | null {
 }
 
 export function addCamera(dto: CreateCameraDTO): Camera {
+  // Bloqueia cadastro duplicado do MESMO dispositivo. Cadastrar a mesma câmera
+  // mais de uma vez faz o app abrir N puxadas RTSP simultâneas nela — câmeras
+  // Xiongmai/8MP servem pouquíssimas sessões e passam a recusar o vídeo (o TCP
+  // conecta, mas o stream dá "Sem sinal"). Compara por IP+porta+URL de stream,
+  // permitindo canais distintos do mesmo NVR (que têm streamUrl diferente).
+  const duplicate = listCameras().find(
+    (c) => c.ip === dto.ip && c.port === dto.port && c.streamUrl === dto.streamUrl,
+  );
+  if (duplicate) {
+    throw new Error(
+      `Câmera já cadastrada: "${duplicate.name}" (${duplicate.ip}:${duplicate.port}). ` +
+        `Cadastro duplicado bloqueado — remova a existente antes de recadastrar.`,
+    );
+  }
+
   const now = Date.now();
   const camera: Camera = {
     id: `cam_${randomUUID().slice(0, 8)}`,

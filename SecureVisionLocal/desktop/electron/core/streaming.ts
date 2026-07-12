@@ -6,7 +6,7 @@ import { hwaccelArgs } from './hwaccel';
 import { isSafeStreamUrl } from './urlGuard';
 import { injectCredentials } from './onvifInfo';
 import { insertCameraLog } from './cameraLogger';
-import { liveFramePath } from './liveFrameCache';
+import { liveFramePath, freshLiveFrame } from './liveFrameCache';
 import { aiDetectVf } from './ai/aiDetection';
 import type { Camera, StreamInfo, DetectionConfig } from '../../src/shared/types';
 
@@ -162,6 +162,7 @@ interface ActiveStream {
   viewerActive?: boolean; // há visualização ao vivo ativa
   record?: boolean; // gravar segmentos MP4 desta puxada
   detect?: boolean; // alimentar a detecção IA com os quadros desta puxada
+  verify?: boolean; // verificação/autoajuste de posição consumindo o liveFrame desta puxada
   detectConfig?: DetectionConfig;
   recDir?: string; // diretório dos segmentos de gravação
   segmentSeconds?: number;
@@ -195,7 +196,33 @@ export class StreamingService {
 
   // Verdadeiro se algo ainda precisa da puxada (visualização, gravação ou detecção).
   private stillNeeded(state: ActiveStream): boolean {
-    return !!(state.viewerActive || state.record || state.detect);
+    return !!(state.viewerActive || state.record || state.detect || state.verify);
+  }
+
+  // Mantém a puxada única viva durante a verificação/autoajuste de posição, para que ela
+  // CONSUMA o liveFrame compartilhado em vez de abrir sessões RTSP próprias (que saturam
+  // câmeras com poucas sessões, ex.: Xiongmai). Liga a puxada se preciso e aguarda um
+  // primeiro quadro fresco (até ~6s). Idempotente por câmera.
+  async retainForCapture(camera: Camera): Promise<void> {
+    const st = await this.ensureState(
+      camera,
+      this.streams.get(camera.id)?.preferredQuality ?? 'high',
+    );
+    st.verify = true;
+    if (!st.ffmpeg) this.spawnCameraFfmpeg(st);
+    for (let i = 0; i < 20; i++) {
+      if (freshLiveFrame(camera.id)) return;
+      // eslint-disable-next-line no-await-in-loop
+      await new Promise((r) => setTimeout(r, 300));
+    }
+  }
+
+  // Libera a retenção da verificação; desliga a puxada só se nada mais precisar dela.
+  releaseForCapture(cameraId: string): void {
+    const st = this.streams.get(cameraId);
+    if (!st) return;
+    st.verify = false;
+    if (!this.stillNeeded(st)) this.stop(cameraId);
   }
 
   isActive(cameraId: string): boolean {

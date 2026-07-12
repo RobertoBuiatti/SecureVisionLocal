@@ -7,7 +7,7 @@ import { getReferenceMarks } from './referenceMarksRepository';
 import { verifyWithReferences, fineTune } from './referenceVerifier';
 import {
   captureGrayFrame,
-  captureGrayFrameMedian,
+  captureGrayFromLive,
   frameDistance,
   frameDistanceCrop,
   estimateShift,
@@ -17,6 +17,8 @@ import { getSettings } from './settings';
 import { tourRunner } from './tourRunner';
 import { aiVerifyPosition, computeAndSaveReferenceEmbedding } from './ai/aiVerifier';
 import { injectCredentials } from './onvifInfo';
+import { streamingService } from './streaming';
+import { insertCameraLog } from './cameraLogger';
 
 // Distância (0..100, menor = mais parecido) acima disso = posição provavelmente errada.
 // Usa correlação normalizada (frameDistance), robusta a brilho — por isso o limiar é baixo.
@@ -156,6 +158,10 @@ class PositionVerifier {
     if (!presets.length) return [];
 
     this.busy.add(camera.id);
+    // Conexão única: mantém a puxada viva para a verificação CONSUMIR o liveFrame
+    // compartilhado, em vez de abrir sessões RTSP concorrentes na câmera (que a XM
+    // 8MP recusa). Liberada no finally.
+    await streamingService.retainForCapture(camera);
 
     // Pausa a rota durante a verificação (e retoma depois, mesmo se algo falhar).
     const status = tourRunner.status(camera.id);
@@ -175,12 +181,21 @@ class PositionVerifier {
 
         // Referência = imagem do ponto no momento em que foi criado.
         const ref = await captureGrayFrame(preset.snapshotPath as string, true);
-        const cur = await captureGrayFrameMedian(url, false, MEASURE_SAMPLES);
+        // Quadro atual pela conexão única (liveFrame; fallback RTSP se não houver quadro).
+        const cur = await captureGrayFromLive(camera.id, MEASURE_SAMPLES);
 
         // Sem referência ou sem quadro atual (ex.: queda momentânea de rede): a posição
         // é INDETERMINADA. Nunca mexe a câmera "no escuro" — só registra e segue.
         if (!ref || !cur) {
           setPresetCheck(preset.id, false, 100);
+          insertCameraLog(
+            camera.id,
+            camera.name,
+            'warn',
+            `Posição "${preset.name}" INDETERMINADA — puxada única sem quadro (RTSP não tentado)`,
+            `Câmera: ${camera.name}\nPreset: ${preset.name}\nReferência: ${ref ? 'ok' : 'ausente/ilegível'}\nQuadro atual: ${cur ? 'ok' : 'não obtido'}\n\nMotivo: a verificação usa EXCLUSIVAMENTE o quadro da puxada única (liveFrame). Por design de conexão única, NÃO abrimos nenhuma sessão RTSP nova na câmera. ${cur ? 'A imagem de referência do preset não pôde ser lida.' : 'A puxada única não forneceu quadro fresco — o streaming/gravação da câmera pode estar inativo ou a puxada ainda não estabilizou.'}\n\nNenhuma conexão RTSP extra foi aberta. Posição marcada como INDETERMINADA (a câmera não é movida no escuro).`,
+            'ptz',
+          );
           results.push({
             presetId: preset.id,
             presetName: preset.name,
@@ -202,7 +217,7 @@ class PositionVerifier {
         // robusta a essas variações. Se a IA confirmar que a cena é a mesma, o score
         // ZNCC é ignorado — a posição está correta, só mudou a luz.
         if (!ok && !this.aborted) {
-          const aiSim = await aiVerifyPosition(url, preset.id);
+          const aiSim = await aiVerifyPosition(camera.id, url, preset.id);
           if (aiSim !== null && aiSim > 0.7) {
             score = 0;
             ok = true;
@@ -219,11 +234,11 @@ class PositionVerifier {
         if (!ok && score >= THRESHOLD && score < MODERATE_SCORE && !this.aborted) {
           const marks = getReferenceMarks(preset.id);
           if (marks.length > 0) {
-            const refResult = await verifyWithReferences(camera, preset.id);
+            const refResult = await verifyWithReferences(camera, preset.id, preset.snapshotPath as string);
             if (refResult.adjusted && refResult.confidence > 0.5) {
               await fineTune(camera, refResult.dx, refResult.dy);
               await sleep(SETTLE_MS);
-              const recheck = await captureGrayFrameMedian(url, false, MEASURE_SAMPLES);
+              const recheck = await captureGrayFromLive(camera.id, MEASURE_SAMPLES);
               if (recheck) {
                 const newScore = frameDistance(recheck, ref);
                 if (newScore < THRESHOLD) {
@@ -250,7 +265,7 @@ class PositionVerifier {
           score = realign.score;
           // Se o realinhamento corrigiu a posição, atualiza o embedding AI de referência
           if (realign.corrected) {
-            computeAndSaveReferenceEmbedding(url, preset.id).catch(() => {});
+            computeAndSaveReferenceEmbedding(camera.id, url, preset.id).catch(() => {});
           }
         }
 
@@ -260,11 +275,11 @@ class PositionVerifier {
         if (ok && !this.aborted) {
           const marks = getReferenceMarks(preset.id);
           if (marks.length > 0 && !marksFineTuned) {
-            const refResult = await verifyWithReferences(camera, preset.id);
+            const refResult = await verifyWithReferences(camera, preset.id, preset.snapshotPath as string);
             if (refResult.adjusted && refResult.confidence > 0.5) {
               await fineTune(camera, refResult.dx, refResult.dy);
               await sleep(SETTLE_MS);
-              const finalCur = await captureGrayFrameMedian(url, false, MEASURE_SAMPLES);
+              const finalCur = await captureGrayFromLive(camera.id, MEASURE_SAMPLES);
               if (finalCur) {
                 const newScore = frameDistance(finalCur, ref);
                 // Se a segunda passada melhorou ainda mais, persiste
@@ -293,6 +308,7 @@ class PositionVerifier {
         if (!ok && !corrected) this.warn(camera, preset.name);
       }
     } finally {
+      streamingService.releaseForCapture(camera.id);
       this.busy.delete(camera.id);
       if (resumeTourId) {
         const tour = getTour(resumeTourId);
@@ -317,8 +333,8 @@ class PositionVerifier {
 
   // Mede a distância do quadro atual (mediana de N amostras) em relação à referência.
   // Retorna null se não conseguiu capturar — o chamador NÃO deve mover nesse caso.
-  private async distanceNow(url: string, ref: Buffer): Promise<number | null> {
-    const f = await captureGrayFrameMedian(url, false, MEASURE_SAMPLES);
+  private async distanceNow(camera: Camera, url: string, ref: Buffer): Promise<number | null> {
+    const f = await captureGrayFromLive(camera.id, MEASURE_SAMPLES);
     return f ? frameDistance(f, ref) : null;
   }
 
@@ -327,11 +343,12 @@ class PositionVerifier {
   // A imagem inteira valida a reconvergência; o recorte guia o ajuste fino.
   // Retorna null se a captura falhou (não mover nesse caso).
   private async measureAt(
+    camera: Camera,
     url: string,
     ref: Buffer,
     crop: number,
   ): Promise<{ full: number; crop: number; frame: Buffer } | null> {
-    const f = await captureGrayFrameMedian(url, false, MEASURE_SAMPLES);
+    const f = await captureGrayFromLive(camera.id, MEASURE_SAMPLES);
     if (!f) return null;
     return {
       full: frameDistance(f, ref),
@@ -381,7 +398,7 @@ class PositionVerifier {
 
       // Posiciona no melhor ponto atual e mede neste nível (recorte) + imagem inteira.
       await this.goToPath(camera, token, path);
-      let atBest = await this.measureAt(url, ref, level.crop);
+      let atBest = await this.measureAt(camera, url, ref, level.crop);
       if (!atBest) break; // captura falhou → não arrisca mexer
       if (atBest.full < THRESHOLD) break; // imagem inteira já bate → não precisa afinar mais
 
@@ -402,7 +419,7 @@ class PositionVerifier {
           await this.goToPath(camera, token, path); // parte sempre do melhor ponto atual
           await this.moveBurst(camera, d, level.ms);
           await sleep(SEARCH_SETTLE_MS);
-          const m = await this.measureAt(url, ref, level.crop);
+          const m = await this.measureAt(camera, url, ref, level.crop);
           // Só conta como ganho se superar o ruído (SEARCH_EPS). null = captura falhou.
           if (m && m.crop < atBest.crop - SEARCH_EPS) {
             path.push({ dir: d, ms: level.ms });
@@ -417,7 +434,7 @@ class PositionVerifier {
 
     // Avalia o resultado pela IMAGEM INTEIRA (robusta contra falso encaixe de recorte).
     await this.goToPath(camera, token, path);
-    const finalFull = path.length && !this.aborted ? await this.distanceNow(url, ref) : null;
+    const finalFull = path.length && !this.aborted ? await this.distanceNow(camera, url, ref) : null;
 
     // Confirma SOMENTE se a imagem inteira voltou a bater e melhorou de verdade sobre o
     // início. Aí sim regrava o preset UMA vez, travando a posição corrigida.

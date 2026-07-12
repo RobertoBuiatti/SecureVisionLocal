@@ -6,6 +6,7 @@ import { FFMPEG_PATH } from '../ffmpegPath';
 import { ensureModel, resolveModelPath } from './modelManager';
 import { preprocess as yoloPreprocess, YOLO_INPUT } from './yolo';
 import { presetsSnapshotDir } from '../snapshotService';
+import { freshLiveFrame } from '../liveFrameCache';
 
 const nodeRequire = createRequire(__filename);
 let ortLib: any = null;
@@ -24,16 +25,14 @@ function ort(): any {
 
 const FRAME_BYTES = YOLO_INPUT * YOLO_INPUT * 3;
 
-function captureRgbFrame(url: string): Promise<Buffer | null> {
+// Conexão única ESTRITA: usa SOMENTE o liveFrame compartilhado (arquivo JPEG da puxada).
+// Sem quadro fresco → null; NÃO abre sessão RTSP própria (evita concorrência na câmera).
+function captureRgbFrame(cameraId: string | null): Promise<Buffer | null> {
+  const live = cameraId ? freshLiveFrame(cameraId) : null;
+  if (!live) return Promise.resolve(null);
+  const vf = `scale=${YOLO_INPUT}:${YOLO_INPUT},format=rgb24`;
+  const args = ['-i', live, '-frames:v', '1', '-vf', vf, '-f', 'rawvideo', 'pipe:1'];
   return new Promise((resolve) => {
-    const args = [
-      '-rtsp_transport', 'tcp',
-      '-i', url,
-      '-frames:v', '1',
-      '-vf', `scale=${YOLO_INPUT}:${YOLO_INPUT},format=rgb24`,
-      '-f', 'rawvideo',
-      'pipe:1',
-    ];
     const chunks: Buffer[] = [];
     const ff = spawn(FFMPEG_PATH, args);
     ff.on('error', () => resolve(null));
@@ -119,9 +118,13 @@ export function loadEmbedding(presetId: string): Float32Array | null {
   }
 }
 
-export async function computeAndSaveReferenceEmbedding(url: string, presetId: string): Promise<boolean> {
+export async function computeAndSaveReferenceEmbedding(
+  cameraId: string | null,
+  url: string,
+  presetId: string,
+): Promise<boolean> {
   if (!ort()) return false;
-  const rgb = await captureRgbFrame(url);
+  const rgb = await captureRgbFrame(cameraId);
   if (!rgb) return false;
   const emb = await computeEmbedding(rgb);
   if (!emb) return false;
@@ -129,11 +132,15 @@ export async function computeAndSaveReferenceEmbedding(url: string, presetId: st
   return true;
 }
 
-export async function aiVerifyPosition(url: string, presetId: string): Promise<number | null> {
+export async function aiVerifyPosition(
+  cameraId: string | null,
+  url: string,
+  presetId: string,
+): Promise<number | null> {
   if (!ort()) return null;
   const ref = loadEmbedding(presetId);
   if (!ref) return null;
-  const rgb = await captureRgbFrame(url);
+  const rgb = await captureRgbFrame(cameraId);
   if (!rgb) return null;
   const cur = await computeEmbedding(rgb);
   if (!cur) return null;

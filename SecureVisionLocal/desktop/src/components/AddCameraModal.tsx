@@ -26,6 +26,7 @@ export function AddCameraModal({ prefill, onClose }: AddCameraModalProps) {
   const [saving, setSaving] = useState(false);
   const [probing, setProbing] = useState(false);
   const [probeMsg, setProbeMsg] = useState<string | null>(null);
+  const [saveErr, setSaveErr] = useState<string | null>(null);
 
   function set<K extends keyof CreateCameraDTO>(key: K, value: CreateCameraDTO[K]) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -81,10 +82,14 @@ export function AddCameraModal({ prefill, onClose }: AddCameraModalProps) {
 
   async function handleSave() {
     setSaving(true);
+    setSaveErr(null);
     try {
       const camera = await window.svl.cameras.add({ ...form, streamUrl: buildStreamUrl() });
       addCamera(camera);
       onClose();
+    } catch (err) {
+      // Ex.: cadastro duplicado bloqueado no núcleo (mesma câmera adicionada 2x).
+      setSaveErr(err instanceof Error ? err.message : 'Falha ao adicionar a câmera.');
     } finally {
       setSaving(false);
     }
@@ -169,6 +174,7 @@ export function AddCameraModal({ prefill, onClose }: AddCameraModalProps) {
             A câmera já segue objetos sozinha (auto-track) — o software não comanda o PTZ
           </label>
         )}
+        {saveErr && <p className="probe-msg error">{saveErr}</p>}
         <div className="modal-actions">
           <button className="btn" onClick={onClose}>
             Cancelar

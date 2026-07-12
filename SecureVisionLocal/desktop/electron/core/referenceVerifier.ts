@@ -1,8 +1,5 @@
-import { join } from 'node:path';
-import { readFileSync } from 'node:fs';
 import { getReferenceMarks } from './referenceMarksRepository';
-import { captureGrayFrame, captureGrayFrameMedian, ANALYSIS_SIZE, frameDistance } from './snapshotService';
-import { presetsSnapshotDir } from './snapshotService';
+import { captureGrayFrame, captureGrayFromLive, ANALYSIS_SIZE, frameDistance } from './snapshotService';
 import { controlPtz, continuousMoveVector } from './ptz';
 import type { Camera, ReferenceMark } from '../../src/shared/types';
 import { injectCredentials } from './onvifInfo';
@@ -40,8 +37,7 @@ interface SuggestedFeature {
 // e sugere pontos de referência automáticos.
 // A estratégia busca as bordas (pontas) e o centro da imagem — regiões com maior
 // riqueza visual para servir como marcas de alinhamento — em vez de varrer em grade.
-export async function detectFeatures(presetId: string): Promise<SuggestedFeature[]> {
-  const refPath = join(presetsSnapshotDir(), `${presetId}.jpg`);
+export async function detectFeatures(refPath: string): Promise<SuggestedFeature[]> {
   const gray = await loadRefGray(refPath);
   if (!gray) return [];
 
@@ -108,22 +104,25 @@ export async function detectFeatures(presetId: string): Promise<SuggestedFeature
 
 // Verifica a posição atual da câmera contra as marcas de referência do preset.
 // Retorna deslocamento médio (dx, dy) entre a posição esperada e a atual.
-export async function verifyWithReferences(camera: Camera, presetId: string): Promise<VerificationResult> {
+export async function verifyWithReferences(
+  camera: Camera,
+  presetId: string,
+  refPath: string,
+): Promise<VerificationResult> {
   const marks = getReferenceMarks(presetId);
   if (!marks.length) {
     return { adjusted: false, dx: 0, dy: 0, confidence: 1, markResults: [] };
   }
 
-  const refPath = join(presetsSnapshotDir(), `${presetId}.jpg`);
   const refGray = await loadRefGray(refPath);
   if (!refGray) {
     return { adjusted: false, dx: 0, dy: 0, confidence: 0, markResults: [] };
   }
 
   const side = ANALYSIS_SIZE;
-  const rawUrl = camera.subStreamUrl || camera.streamUrl;
-  const url = injectCredentials(rawUrl, camera.username, camera.password);
-  const currentGray = await captureGrayFrameMedian(url, false, 3);
+  // Conexão única ESTRITA: consome só o liveFrame compartilhado. Sem quadro fresco →
+  // null (não abre RTSP); o chamador registra o motivo.
+  const currentGray = await captureGrayFromLive(camera.id, 3);
   if (!currentGray) {
     return { adjusted: false, dx: 0, dy: 0, confidence: 0, markResults: [] };
   }
@@ -248,8 +247,12 @@ function findTemplateInFrame(template: Buffer, frame: Buffer, side: number, mark
   const actualTw = Math.max(4, Math.min(tw || 8, side));
   const actualTh = Math.max(4, Math.min(th || 8, side));
 
-  const expectedCol = Math.round(mark.expectedDistanceLeft);
-  const expectedRow = Math.round(mark.expectedDistanceTop);
+  // expectedDistanceLeft/Top são gravados como o CENTRO da marca (ver o editor e
+  // detectFeatures). O casamento de template usa o canto superior-esquerdo, então
+  // convertemos centro→canto aqui (e canto→centro no retorno, em currentDist*), para
+  // que o delta esperado-vs-atual fique sem viés sistemático.
+  const expectedCol = Math.round(mark.expectedDistanceLeft - actualTw / 2);
+  const expectedRow = Math.round(mark.expectedDistanceTop - actualTh / 2);
   const searchMinX = Math.max(0, expectedCol - SEARCH_RANGE);
   const searchMaxX = Math.min(side - actualTw, expectedCol + SEARCH_RANGE);
   const searchMinY = Math.max(0, expectedRow - SEARCH_RANGE);
@@ -290,8 +293,8 @@ function findTemplateInFrame(template: Buffer, frame: Buffer, side: number, mark
     found,
     currentX: bestX,
     currentY: bestY,
-    currentDistLeft: found ? bestX : mark.expectedDistanceLeft,
-    currentDistTop: found ? bestY : mark.expectedDistanceTop,
+    currentDistLeft: found ? bestX + actualTw / 2 : mark.expectedDistanceLeft,
+    currentDistTop: found ? bestY + actualTh / 2 : mark.expectedDistanceTop,
   };
 }
 
