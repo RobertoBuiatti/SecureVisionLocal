@@ -214,6 +214,35 @@ export class StreamingService {
     return { cameraId: camera.id, wsPort, status: 'starting' };
   }
 
+  // Atualiza a câmera de um stream em execução (ex.: o IP mudou por DHCP e foi
+  // auto-curado). Reconstrói as URLs candidatas e reinicia o FFmpeg para pegar o
+  // novo endereço imediatamente, sem esperar o ciclo de reconexão.
+  refreshCamera(camera: Camera): void {
+    const state = this.streams.get(camera.id);
+    if (!state || state.isFile) return;
+    state.camera = camera;
+    state.urlCandidates = this.buildUrlCandidates(camera, state.quality);
+    state.urlAttempt = 0;
+    state.reconnectCount = 0;
+    if (state.reconnectTimer) {
+      clearTimeout(state.reconnectTimer);
+      state.reconnectTimer = undefined;
+    }
+    const old = state.ffmpeg;
+    state.ffmpeg = null;
+    if (old) {
+      old.removeAllListeners('close');
+      old.removeAllListeners('error');
+      try {
+        old.kill('SIGKILL');
+      } catch {
+        /* noop */
+      }
+    }
+    state.gotData = false;
+    this.spawnCameraFfmpeg(state);
+  }
+
   private startWatchdog(state: ActiveStream): void {
     if (state.watchdog) return;
     const quality = state.quality; // agora obrigatório

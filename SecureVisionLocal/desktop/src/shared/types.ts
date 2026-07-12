@@ -20,6 +20,7 @@ export interface Camera {
   subStreamUrl?: string; // substream (grade)
   onvifProfile?: string;
   onvifPort?: number; // porta do serviço ONVIF (ex.: 8899 em Xiongmai) p/ PTZ
+  mac?: string; // MAC aprendido na conexão; usado p/ reencontrar o IP quando muda (DHCP)
   status: CameraStatus;
   hasPTZ: boolean;
   hasAudio: boolean;
@@ -229,6 +230,7 @@ export interface ConnectionTestResult {
   latency: number | null;
   error: string | null;
   timestamp: number;
+  host?: string; // host que respondeu (pode diferir de camera.ip quando o IP muda por DHCP)
 }
 
 // ---- PTZ: presets e rotas (tours/patrulha) ----

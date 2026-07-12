@@ -161,6 +161,7 @@ function migrate(database: Database.Database): void {
 
   addColumnIfMissing(database, 'cameras', 'onvifPort', 'INTEGER');
   addColumnIfMissing(database, 'cameras', 'hasOnboardTracking', 'INTEGER');
+  addColumnIfMissing(database, 'cameras', 'mac', 'TEXT');
   addColumnIfMissing(database, 'ptz_presets', 'snapshotPath', 'TEXT');
   addColumnIfMissing(database, 'ptz_presets', 'lastCheckAt', 'INTEGER');
   addColumnIfMissing(database, 'ptz_presets', 'lastCheckOk', 'INTEGER');

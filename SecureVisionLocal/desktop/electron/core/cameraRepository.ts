@@ -18,6 +18,7 @@ interface CameraRow {
   subStreamUrl: string | null;
   onvifProfile: string | null;
   onvifPort: number | null;
+  mac: string | null;
   status: string;
   hasPTZ: number;
   hasAudio: number;
@@ -45,6 +46,7 @@ function rowToCamera(r: CameraRow): Camera {
     subStreamUrl: decryptSecret(r.subStreamUrl) ?? undefined,
     onvifProfile: r.onvifProfile ?? undefined,
     onvifPort: r.onvifPort ?? undefined,
+    mac: r.mac ?? undefined,
     status: r.status as Camera['status'],
     hasPTZ: !!r.hasPTZ,
     hasAudio: !!r.hasAudio,
@@ -95,11 +97,11 @@ export function addCamera(dto: CreateCameraDTO): Camera {
     .prepare(
       `INSERT INTO cameras
         (id, name, ip, port, protocol, type, manufacturer, username, password,
-         streamUrl, subStreamUrl, onvifProfile, onvifPort, status, hasPTZ, hasAudio,
+         streamUrl, subStreamUrl, onvifProfile, onvifPort, mac, status, hasPTZ, hasAudio,
          hasOnboardTracking, presetCount, recordContinuous, createdAt, updatedAt)
        VALUES
         (@id, @name, @ip, @port, @protocol, @type, @manufacturer, @username, @password,
-         @streamUrl, @subStreamUrl, @onvifProfile, @onvifPort, @status, @hasPTZ, @hasAudio,
+         @streamUrl, @subStreamUrl, @onvifProfile, @onvifPort, @mac, @status, @hasPTZ, @hasAudio,
          @hasOnboardTracking, @presetCount, @recordContinuous, @createdAt, @updatedAt)`,
     )
     .run({
@@ -111,6 +113,7 @@ export function addCamera(dto: CreateCameraDTO): Camera {
       subStreamUrl: encryptSecret(camera.subStreamUrl ?? null),
       onvifProfile: camera.onvifProfile ?? null,
       onvifPort: camera.onvifPort ?? null,
+      mac: camera.mac ?? null,
       hasPTZ: camera.hasPTZ ? 1 : 0,
       hasAudio: camera.hasAudio ? 1 : 0,
       hasOnboardTracking: camera.hasOnboardTracking ? 1 : 0,
@@ -131,7 +134,7 @@ export function updateCamera(id: string, updates: Partial<Camera>): Camera | nul
         name=@name, ip=@ip, port=@port, protocol=@protocol, type=@type,
         manufacturer=@manufacturer, username=@username, password=@password,
         streamUrl=@streamUrl, subStreamUrl=@subStreamUrl, onvifProfile=@onvifProfile,
-        onvifPort=@onvifPort, status=@status, hasPTZ=@hasPTZ, hasAudio=@hasAudio,
+        onvifPort=@onvifPort, mac=@mac, status=@status, hasPTZ=@hasPTZ, hasAudio=@hasAudio,
         hasOnboardTracking=@hasOnboardTracking,
         presetCount=@presetCount, recordContinuous=@recordContinuous, updatedAt=@updatedAt
        WHERE id=@id`,
@@ -145,6 +148,7 @@ export function updateCamera(id: string, updates: Partial<Camera>): Camera | nul
       subStreamUrl: encryptSecret(merged.subStreamUrl ?? null),
       onvifProfile: merged.onvifProfile ?? null,
       onvifPort: merged.onvifPort ?? null,
+      mac: merged.mac ?? null,
       hasPTZ: merged.hasPTZ ? 1 : 0,
       hasAudio: merged.hasAudio ? 1 : 0,
       hasOnboardTracking: merged.hasOnboardTracking ? 1 : 0,
