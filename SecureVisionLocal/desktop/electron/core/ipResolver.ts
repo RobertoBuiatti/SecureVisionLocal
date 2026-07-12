@@ -46,21 +46,37 @@ async function readArpTable(): Promise<Map<string, string>> {
   return map;
 }
 
-function touchTcp(host: string, port: number, timeoutMs: number): Promise<void> {
+// Conecta em host:porta e resolve true se conectou (porta aberta), false caso contrário.
+function probeReachable(host: string, port: number, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = createConnection({ host, port });
     let done = false;
-    const finish = (): void => {
+    const finish = (ok: boolean): void => {
       if (done) return;
       done = true;
       socket.destroy();
-      resolve();
+      resolve(ok);
     };
     socket.setTimeout(timeoutMs);
-    socket.on('connect', finish);
-    socket.on('timeout', finish);
-    socket.on('error', finish);
+    socket.on('connect', () => finish(true));
+    socket.on('timeout', () => finish(false));
+    socket.on('error', () => finish(false));
   });
+}
+
+function touchTcp(host: string, port: number, timeoutMs: number): Promise<void> {
+  return probeReachable(host, port, timeoutMs).then(() => undefined);
+}
+
+// Dentre vários IPs candidatos (mesmo MAC), devolve o PRIMEIRO que responde na porta
+// RTSP. Essencial quando o ARP tem entradas obsoletas: o MAC pode aparecer em 2 IPs
+// (o antigo, já solto pelo DHCP, e o novo), mas só um realmente aceita conexão.
+async function firstReachable(ips: string[]): Promise<string | null> {
+  if (ips.length === 0) return null;
+  const checks = await Promise.all(
+    ips.map(async (ip) => ({ ip, ok: await probeReachable(ip, 554, 1500) })),
+  );
+  return checks.find((c) => c.ok)?.ip ?? null;
 }
 
 // Varre a(s) sub-rede(s) local(is) na porta RTSP para popular a tabela ARP com os
@@ -90,15 +106,19 @@ export async function getMacForIp(ip: string): Promise<string | null> {
   return table.get(ip) ?? null;
 }
 
-// Encontra o IP ATUAL de um MAC. Tenta a tabela ARP direto; se não achar, varre a
-// sub-rede para popular o ARP e tenta de novo.
+// Encontra o IP ATUAL e ACESSÍVEL de um MAC. Junta todos os IPs que casam com o MAC
+// na tabela ARP e devolve o que responde na porta RTSP (descarta entradas obsoletas).
+// Se nenhum responder, varre a sub-rede para popular o ARP e tenta de novo.
 export async function findIpForMac(mac: string): Promise<string | null> {
   const target = normalizeMac(mac);
-  let table = await readArpTable();
-  for (const [ip, m] of table) if (m === target) return ip;
+  const matches = (table: Map<string, string>): string[] =>
+    Array.from(table.entries())
+      .filter(([, m]) => m === target)
+      .map(([ip]) => ip);
+
+  const direct = await firstReachable(matches(await readArpTable()));
+  if (direct) return direct;
 
   await sweepToPopulateArp();
-  table = await readArpTable();
-  for (const [ip, m] of table) if (m === target) return ip;
-  return null;
+  return firstReachable(matches(await readArpTable()));
 }

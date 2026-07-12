@@ -452,13 +452,15 @@ export class StreamingService {
       const camera = state.camera;
       const name = camera?.name || state.cameraId;
 
-      // Failover automático high → low (só após N stalls consecutivos)
-      const attemptFailoverToLow = () => {
+      // Failover automático high → low. Normalmente só após N stalls consecutivos,
+      // mas com `force` (quando o high NUNCA conectou) cai na hora — um main-stream
+      // 8MP às vezes nem abre em WiFi, e ficar tentando só ele deixaria a tela preta.
+      const attemptFailoverToLow = (force = false) => {
         if (!camera?.subStreamUrl) return false;
         if (state.quality === 'low') return false; // já está em low
         if (state.failoverActive) return false; // já tentou failover
         const stalls = state.stallCount || 0;
-        if (stalls < MAX_STALLS_BEFORE_FAILOVER) return false; // não atingiu threshold
+        if (!force && stalls < MAX_STALLS_BEFORE_FAILOVER) return false; // não atingiu threshold
         const nextQuality: 'low' = 'low';
         state.failoverActive = true;
         state.quality = nextQuality;
@@ -472,7 +474,7 @@ export class StreamingService {
           name,
           'warn',
           `Failover automático: "${name}" caindo para qualidade baixa (sub-stream)`,
-          `Câmera: ${name}\nIP: ${camera.ip}:${camera.port}\nQualidade preferida: ${state.preferredQuality}\nNova qualidade: ${nextQuality}\nStalls consecutivos: ${stalls}\nURL sub-stream: ${(camera.subStreamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\nO stream de alta qualidade travou ${stalls}x. Tentando o sub-stream como fallback.`,
+          `Câmera: ${name}\nIP: ${camera.ip}:${camera.port}\nQualidade preferida: ${state.preferredQuality}\nNova qualidade: ${nextQuality}\nStalls consecutivos: ${stalls}\nURL sub-stream: ${(camera.subStreamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\n${force ? 'O stream principal (alta qualidade) não pôde ser aberto — comum em câmera 8MP via WiFi.' : `O stream de alta qualidade travou ${stalls}x.`} Usando o sub-stream como fallback. O probe tentará restaurar a alta qualidade quando ela ficar estável.`,
           'streaming',
         );
         this.notifier?.({ cameraId: state.cameraId, status: 'error', error: 'Alta qualidade indisponível. Tentando baixa…' });
@@ -632,8 +634,9 @@ const probe = spawn(FFMPEG_PATH, probeArgs, { stdio: ['ignore', 'ignore', 'pipe'
           }, 500);
           return;
         }
-        // Acabaram URLs da qualidade atual. Se estava em high e tem sub-stream, tenta failover.
-        if (state.quality === 'high' && attemptFailoverToLow()) return;
+        // Acabaram as URLs do high e NUNCA conectou: cai imediatamente para o sub-stream
+        // (força, sem esperar acumular stalls — o main 8MP às vezes nem abre em WiFi).
+        if (state.quality === 'high' && attemptFailoverToLow(true)) return;
       } else {
         // Estava conectado e caiu
         insertCameraLog(

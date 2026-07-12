@@ -262,7 +262,7 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
         camera.name,
         'warn',
         `Preset "${name}" salvo SEM snapshot de referência`,
-        `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nTentou capturar snapshot 3x (priorizando stream principal) e falhou. O preset foi salvo, mas sem imagem de referência. Pode recapturar depois via "Atualizar posição".`,
+        `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nTentou capturar snapshot 3x (quadro ao vivo em cache / sub-stream) e falhou. O preset foi salvo, mas sem imagem de referência. Pode recapturar depois via "Atualizar posição" ou "Recapturar".`,
         'ptz',
       );
     }
