@@ -1,5 +1,6 @@
 import { app, BrowserWindow, Tray, Menu, nativeImage } from 'electron';
 import { join } from 'node:path';
+import { appendFileSync, mkdirSync, renameSync, statSync } from 'node:fs';
 import { registerIpcHandlers } from './ipc/handlers';
 import { getDb, closeDb } from './core/db';
 import { migrateCameraSecrets, mergeDuplicateCameras } from './core/cameraRepository';
@@ -30,8 +31,61 @@ process.env.VITE_PUBLIC = app.isPackaged ? process.env.DIST : join(__dirname, '.
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuiting = false;
+let metricsTimer: ReturnType<typeof setInterval> | null = null;
+let recycleTimer: ReturnType<typeof setInterval> | null = null;
+const RENDERER_RECYCLE_MS = 6 * 60 * 60 * 1000; // recicla o renderer a cada 6h (paliativo)
 
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
+
+// --- Log persistente do processo principal ---------------------------------
+// Em produção o console.log do main não vai para lugar nenhum (sem stdout), então
+// o motivo de "o app inteiro fica preto" (crash de renderer/GPU) se perdia. Aqui
+// espelhamos console.log/error/warn num arquivo rotativo em userData/logs/main.log.
+const LOG_DIR = join(app.getPath('userData'), 'logs');
+const LOG_FILE = join(LOG_DIR, 'main.log');
+const LOG_MAX_BYTES = 5 * 1024 * 1024; // 5 MB → rotaciona mantendo 1 backup (.1)
+
+function writeLog(line: string): void {
+  try {
+    mkdirSync(LOG_DIR, { recursive: true });
+    try {
+      if (statSync(LOG_FILE).size > LOG_MAX_BYTES) renameSync(LOG_FILE, `${LOG_FILE}.1`);
+    } catch {
+      /* arquivo ainda não existe — segue */
+    }
+    appendFileSync(LOG_FILE, line);
+  } catch {
+    /* logar nunca pode derrubar o app */
+  }
+}
+
+for (const level of ['log', 'error', 'warn'] as const) {
+  const orig = console[level].bind(console) as (...a: unknown[]) => void;
+  console[level] = (...args: unknown[]) => {
+    orig(...args);
+    writeLog(`${new Date().toISOString()} [${level}] ${args.map((a) => String(a)).join(' ')}\n`);
+  };
+}
+
+// Recupera o renderer após crash de renderer/GPU (self-heal do "View → Reload").
+// Guarda contra loop de reload quando o crash é imediato e repetido.
+let lastReloadAt = 0;
+let rapidReloads = 0;
+function recoverRenderer(reason: string): void {
+  const now = Date.now();
+  rapidReloads = now - lastReloadAt < 15_000 ? rapidReloads + 1 : 0;
+  lastReloadAt = now;
+  if (rapidReloads >= 3) {
+    console.error(`[recover] reloads repetidos (${reason}) — auto-reload pausado para evitar loop`);
+    return;
+  }
+  console.log(`[recover] recriando renderer após: ${reason}`);
+  try {
+    mainWindow?.webContents.reload();
+  } catch (e) {
+    console.error(`[recover] falha ao recarregar: ${(e as Error)?.message}`);
+  }
+}
 
 // Captura erros não tratados do processo principal no log.
 process.on('uncaughtException', (err) => {
@@ -72,10 +126,15 @@ function createWindow(): void {
   });
   mainWindow.webContents.on('render-process-gone', (_e, details) => {
     console.log(`[renderer:gone] ${JSON.stringify(details)}`);
+    if (details.reason !== 'clean-exit') recoverRenderer(`render-process-gone:${details.reason}`);
   });
   mainWindow.webContents.on('preload-error', (_e, path, error) => {
     console.log(`[preload-error] ${path} ${error?.message}`);
   });
+  // Renderer travado (JS preso/heap saturado). Só logamos — reload aqui poderia
+  // matar um renderer apenas ocupado; o auto-reload fica para crash de fato.
+  mainWindow.webContents.on('unresponsive', () => console.log('[renderer:unresponsive]'));
+  mainWindow.webContents.on('responsive', () => console.log('[renderer:responsive]'));
 
   // Fechar no X minimiza para a bandeja (mantém gravação 24/7 em segundo plano).
   mainWindow.on('close', (e) => {
@@ -190,14 +249,54 @@ if (!gotLock) {
     createTray();
     setupAutoUpdate();
 
+    // Métricas a cada 60s: memória/CPU por processo (main/renderer/GPU). Um
+    // vazamento aparece como memória subindo antes do blackout; um crash de GPU
+    // aparece como o processo GPU sumindo/reiniciando na sequência dos logs.
+    metricsTimer = setInterval(() => {
+      try {
+        const summary = app
+          .getAppMetrics()
+          .map((m) => `${m.type}${m.name ? `(${m.name})` : ''}:${Math.round((m.memory?.workingSetSize ?? 0) / 1024)}MB`)
+          .join(' ');
+        console.log(`[metrics] ${summary}`);
+      } catch {
+        /* noop */
+      }
+    }, 60_000);
+
+    // Reload preventivo do renderer a cada 6h: recicla a superfície de composição
+    // antes do acúmulo de ~10h derrubar a GPU (paliativo — o Estágio 2 ataca a causa).
+    // A gravação 24/7 não é afetada (roda no backend); o vídeo reconecta em ~1-2s.
+    recycleTimer = setInterval(() => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      console.log('[recycle] reload programado do renderer (preventivo, 6h)');
+      try {
+        mainWindow.webContents.reload();
+      } catch (e) {
+        console.error(`[recycle] falha: ${(e as Error)?.message}`);
+      }
+    }, RENDERER_RECYCLE_MS);
+
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
   });
 }
 
+// Crash de processo filho (GPU/utility). O crash do processo de GPU apaga TODA a
+// UI composta na GPU (a janela inteira fica preta) — logamos o motivo e recriamos
+// o renderer para restabelecer a superfície de composição (self-heal do reload).
+app.on('child-process-gone', (_e, details) => {
+  console.log(`[child-gone] ${JSON.stringify(details)}`);
+  if (details.type === 'GPU' && details.reason !== 'clean-exit') {
+    recoverRenderer(`gpu-gone:${details.reason}`);
+  }
+});
+
 app.on('before-quit', () => {
   isQuiting = true;
+  if (metricsTimer) clearInterval(metricsTimer);
+  if (recycleTimer) clearInterval(recycleTimer);
   tourRunner.stopAll(); // mantém a persistência p/ retomar na próxima abertura
   positionVerifier.stop();
   connectionMonitor.stop();
