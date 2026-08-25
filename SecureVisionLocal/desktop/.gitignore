@@ -6,3 +6,9 @@ release-build/
 *.log
 .DS_Store
 resources/models/
+svl-smoke-data/
+svl-fs-data/
+svl-diag-data/
+fs1-tela-cheia.png
+fs2-tela-cheia-controles.png
+svl-pack-data/

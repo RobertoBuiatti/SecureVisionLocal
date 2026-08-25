@@ -67,14 +67,18 @@ export async function captureJpeg(camera: Camera, outPath: string, preferHighQua
   type Strat =
     | { kind: 'cache' }
     | { kind: 'rtsp'; url: string; tries: number; label: string };
+  // `tries` baixo de propósito: cada tentativa é uma sessão RTSP nova. Com 5 tentativas no
+  // sub + 1 no main, uma única captura chegava a abrir 6 conexões — e a captura por detecção
+  // roda a cada 5s. Numa câmera XM isso sozinho derruba o vídeo. O caminho normal é o cache
+  // do quadro ao vivo (que a puxada única mantém a 1 fps); o RTSP é só rede de segurança.
   const strategies: Strat[] = [];
   if (preferHighQuality) {
     if (mainUrl) strategies.push({ kind: 'rtsp', url: mainUrl, tries: 1, label: 'main' });
     strategies.push({ kind: 'cache' });
-    if (subUrl) strategies.push({ kind: 'rtsp', url: subUrl, tries: 5, label: 'sub' });
+    if (subUrl) strategies.push({ kind: 'rtsp', url: subUrl, tries: 2, label: 'sub' });
   } else {
     strategies.push({ kind: 'cache' });
-    if (subUrl) strategies.push({ kind: 'rtsp', url: subUrl, tries: 5, label: 'sub' });
+    if (subUrl) strategies.push({ kind: 'rtsp', url: subUrl, tries: 2, label: 'sub' });
     if (mainUrl) strategies.push({ kind: 'rtsp', url: mainUrl, tries: 1, label: 'main' });
   }
 

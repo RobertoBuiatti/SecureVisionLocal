@@ -149,7 +149,8 @@ class ConnectionMonitor {
           }
 
           const status: CameraStatus = result.success ? 'online' : 'offline';
-          if (status !== camera.status) {
+          const changed = status !== camera.status;
+          if (changed) {
             updateCamera(cam.id, { status });
             if (status === 'offline') {
               insertCameraLog(
@@ -171,7 +172,10 @@ class ConnectionMonitor {
               );
             }
           }
-          this.notifier?.({ cameraId: cam.id, status });
+          // Notifica só na MUDANÇA. Antes disparava para toda câmera a cada ciclo (5-15s);
+          // no renderer isso recria o array de câmeras e re-renderiza a grade inteira sem
+          // que nada tenha mudado.
+          if (changed) this.notifier?.({ cameraId: cam.id, status });
         }),
       );
     } finally {

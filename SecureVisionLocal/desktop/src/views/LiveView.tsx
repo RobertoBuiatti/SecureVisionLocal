@@ -32,6 +32,7 @@ export function LiveView() {
   const [autoCycle, setAutoCycle] = useState(false);
   const [cycleSeconds, setCycleSeconds] = useState(10);
   const [mainPct, setMainPct] = useState(72);
+  const [showFsNav, setShowFsNav] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const focused = cameras.find((c) => c.id === focusedId) ?? cameras[0];
@@ -49,11 +50,56 @@ export function LiveView() {
     return () => clearInterval(t);
   }, [autoCycle, cycleSeconds, cameras]);
 
-  function osFullscreen() {
+  // Em tela cheia a navegação some sozinha após um tempo parado e volta ao mover o mouse.
+  // Um `:hover` no CSS não resolveria: a view ocupa o monitor inteiro, então o ponteiro
+  // está sempre sobre ela e a barra nunca sumiria.
+  useEffect(() => {
+    if (mode !== 'fullscreen') {
+      setShowFsNav(false);
+      return;
+    }
+    let timer: ReturnType<typeof setTimeout>;
+    const reveal = (): void => {
+      setShowFsNav(true);
+      clearTimeout(timer);
+      timer = setTimeout(() => setShowFsNav(false), 2500);
+    };
+    reveal(); // mostra ao entrar, para o usuário saber que os controles existem
+    window.addEventListener('mousemove', reveal);
+    return () => {
+      window.removeEventListener('mousemove', reveal);
+      clearTimeout(timer);
+    };
+  }, [mode]);
+
+  // Tela cheia REAL (do monitor). O elemento promovido é a própria view: como ela já está
+  // no DOM no instante do clique, o `requestFullscreen` acontece dentro do gesto do usuário
+  // (exigência do Chromium) sem depender de esperar um novo render. O que não é vídeo some
+  // por CSS (`.live-view:fullscreen`), então na tela fica só a imagem da câmera.
+  function enterOsFullscreen() {
     const el = containerRef.current;
-    if (!el) return;
-    if (document.fullscreenElement) document.exitFullscreen();
-    else el.requestFullscreen?.();
+    if (!el || document.fullscreenElement) return;
+    void el.requestFullscreen?.().catch(() => {
+      /* o navegador pode recusar (sem gesto/permite-fullscreen); o modo continua válido */
+    });
+  }
+
+  function exitOsFullscreen() {
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+  }
+
+  function osFullscreen() {
+    if (document.fullscreenElement) exitOsFullscreen();
+    else enterOsFullscreen();
+  }
+
+  // Troca de modo: "Tela cheia" leva ao fullscreen do monitor (é o que o rótulo promete);
+  // qualquer outro modo sai dele. Sair pelo Esc não muda o modo — o layout de câmera única
+  // continua válido dentro da janela, e o botão "⛶ Monitor" reentra.
+  function changeMode(next: Mode) {
+    setMode(next);
+    if (next === 'fullscreen') enterOsFullscreen();
+    else exitOsFullscreen();
   }
 
   function step(dir: 1 | -1) {
@@ -72,18 +118,18 @@ export function LiveView() {
         <div className="view-actions wrap">
           {/* Modo de exibição */}
           <div className="layout-switch">
-            <button className={mode === 'grid' ? 'btn small active' : 'btn small'} onClick={() => setMode('grid')}>
+            <button className={mode === 'grid' ? 'btn small active' : 'btn small'} onClick={() => changeMode('grid')}>
               Grade
             </button>
             <button
               className={mode === 'spotlight' ? 'btn small active' : 'btn small'}
-              onClick={() => setMode('spotlight')}
+              onClick={() => changeMode('spotlight')}
             >
               Destaque
             </button>
             <button
               className={mode === 'fullscreen' ? 'btn small active' : 'btn small'}
-              onClick={() => setMode('fullscreen')}
+              onClick={() => changeMode('fullscreen')}
             >
               Tela cheia
             </button>
@@ -168,7 +214,7 @@ export function LiveView() {
       ) : (
         <div className="fullscreen-view">
           {focused && <CameraTile camera={focused} />}
-          <div className="fs-nav">
+          <div className={showFsNav ? 'fs-nav visible' : 'fs-nav'}>
             <button className="btn" onClick={() => step(-1)}>
               ◀
             </button>

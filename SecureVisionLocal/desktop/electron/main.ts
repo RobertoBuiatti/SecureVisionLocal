@@ -228,6 +228,17 @@ if (!gotLock) {
       (camera, config, stream) => aiDetectionService.attachStream(camera, config, stream),
       (cameraId) => aiDetectionService.stop(cameraId),
     );
+    // Clipes de evento saem da puxada única (antes cada detecção abria uma sessão RTSP).
+    recordingService.setClipSource({
+      isActive: (cameraId) => streamingService.isActive(cameraId),
+      start: (cameraId, tsPath) => streamingService.startEventClip(cameraId, tsPath),
+      stop: (cameraId, onClosed) => streamingService.stopEventClip(cameraId, onClosed),
+    });
+    // A detecção de MOVIMENTO também consome a mesma puxada (antes abria sessão própria).
+    streamingService.setMotionSink(
+      (camera, config, stream) => motionDetectionService.attachStream(camera, config, stream),
+      (cameraId) => motionDetectionService.stop(cameraId),
+    );
     // Sem IP fixo: se o stream não conectar (possível troca de IP por DHCP), o
     // StreamingService pede ao monitor para reencontrar a câmera pelo MAC na hora.
     streamingService.setHealRequester((cameraId) => void connectionMonitor.healNow(cameraId));

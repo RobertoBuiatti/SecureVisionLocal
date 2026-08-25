@@ -39,6 +39,9 @@ function parseSegmentTime(filename: string): number {
 
 // Gerencia a gravação contínua 24/7 por câmera, gravando em arquivos segmentados.
 // A reciclagem (apagar os mais antigos) é responsabilidade do módulo de retenção.
+// Segmentos já indexados e fechados, por câmera — ver `indexSegments`.
+const indexedSegments = new Map<string, Set<string>>();
+
 export class ContinuousRecordingService {
   private active = new Map<string, ActiveContinuous>();
 
@@ -174,7 +177,20 @@ export class ContinuousRecordingService {
     if (files.length === 0) return;
     const lastFile = files[files.length - 1];
 
-    files.forEach((file) => {
+    // Só reexamina o que pode ter mudado: os arquivos já indexados e fechados nunca mudam.
+    // Antes cada tique (30s) fazia statSync + consulta ao banco para TODOS os segmentos em
+    // disco — com uma semana de gravação são ~1.000 arquivos por câmera, tudo síncrono no
+    // processo principal, com custo crescendo a cada dia de gravação.
+    const alreadyIndexed = indexedSegments.get(cameraId) ?? new Set<string>();
+    indexedSegments.set(cameraId, alreadyIndexed);
+    const pending = files.filter((f) => !alreadyIndexed.has(f) || f === lastFile);
+    // Segmentos que sumiram do disco (retenção) saem do controle para o Set não crescer.
+    if (alreadyIndexed.size > files.length) {
+      const onDisk = new Set(files);
+      for (const f of alreadyIndexed) if (!onDisk.has(f)) alreadyIndexed.delete(f);
+    }
+
+    pending.forEach((file) => {
       const filePath = join(dir, file);
       let size = 0;
       let mtime = Date.now();
@@ -210,6 +226,8 @@ export class ContinuousRecordingService {
           status: 'completed',
         });
       }
+      // Fechado e indexado: não precisa ser reexaminado nos próximos tiques.
+      if (!isActiveSegment) alreadyIndexed.add(file);
     });
   }
 

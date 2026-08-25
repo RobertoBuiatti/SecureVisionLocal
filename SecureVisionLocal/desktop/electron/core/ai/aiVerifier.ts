@@ -44,6 +44,9 @@ function captureRgbFrame(cameraId: string | null): Promise<Buffer | null> {
   });
 }
 
+// Sessão ONNX única para os embeddings de verificação de posição (ver `computeEmbedding`).
+let embedSession: Awaited<ReturnType<NonNullable<ReturnType<typeof ort>>['InferenceSession']['create']>> | null = null;
+
 export async function computeEmbedding(rgb: Buffer): Promise<Float32Array | null> {
   const runtime = ort();
   if (!runtime) return null;
@@ -53,10 +56,14 @@ export async function computeEmbedding(rgb: Buffer): Promise<Float32Array | null
   const modelPath = resolveModelPath('object');
   if (!modelPath) return null;
 
+  // Sessão reaproveitada entre chamadas. Antes cada `computeEmbedding` criava uma sessão
+  // ONNX nova e NUNCA a liberava: cada verificação de posição (2x/dia, por preset) deixava
+  // o modelo e suas arenas presos na memória nativa, num degrau que só o restart limpava.
   let session;
   try {
-    session = await runtime.InferenceSession.create(modelPath);
+    session = embedSession ?? (embedSession = await runtime.InferenceSession.create(modelPath));
   } catch {
+    embedSession = null;
     return null;
   }
 

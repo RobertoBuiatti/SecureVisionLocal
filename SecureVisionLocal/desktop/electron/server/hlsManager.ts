@@ -59,7 +59,7 @@ export class HlsManager {
     }
     mkdirSync(dir, { recursive: true });
 
-    if (!isSafeStreamUrl(camera.streamUrl)) {
+    if (!isSafeStreamUrl(camera.subStreamUrl || camera.streamUrl)) {
       insertCameraLog(
         camera.id,
         camera.name,
@@ -72,10 +72,15 @@ export class HlsManager {
     }
 
     const playlist = join(dir, 'index.m3u8');
+    // Prefere o SUB-stream, como a detecção e o failover já fazem: o HLS é para o app
+    // mobile/navegador e não justifica puxar o main-stream 8MP — que numa câmera XM
+    // significa disputar a única sessão boa com o vídeo do servidor.
+    const hlsUrl = camera.subStreamUrl || camera.streamUrl;
     const args = [
       ...hwaccelArgs(),
       '-rtsp_transport', 'tcp',
-      '-i', injectCredentials(camera.streamUrl, camera.username, camera.password),
+      '-timeout', '10000000', // sem isto o processo podia pendurar indefinidamente
+      '-i', injectCredentials(hlsUrl, camera.username, camera.password),
       '-an',
       '-c:v', 'libx264',
       '-preset', 'veryfast',

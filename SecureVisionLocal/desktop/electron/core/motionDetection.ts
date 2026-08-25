@@ -1,13 +1,9 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { FFMPEG_PATH } from './ffmpegPath';
 import { insertCameraLog } from './cameraLogger';
 import type { Camera, DetectionConfig, DetectionEvent } from '../../src/shared/types';
 import { insertDetectionEvent, newEventId } from './detectionRepository';
 import { recordingService } from './recording';
 import { captureDetectionSnapshot } from './ai/detectionSnapshotCapture';
 import { getSettings } from './settings';
-import { injectCredentials } from './onvifInfo';
-import { liveFramePath } from './liveFrameCache';
 
 const W = 320;
 const H = 180;
@@ -15,10 +11,15 @@ const FRAME_SIZE = W * H; // 1 byte por pixel (gray)
 const EVENT_DEBOUNCE_MS = 4000; // no máx. 1 evento a cada 4s por câmera
 const RECORD_STOP_DELAY_MS = 12000; // para a gravação 12s após o fim do movimento
 
+// Filtro usado pela puxada única do StreamingService para produzir os quadros de análise.
+// Fica aqui para que o formato do pipe e o parser de quadros nunca saiam de sincronia.
+export function motionVf(): string {
+  return `fps=3,scale=${W}:${H},format=gray`;
+}
+
 interface MotionState {
   camera: Camera;
   config: DetectionConfig;
-  ffmpeg: ChildProcessWithoutNullStreams;
   prev: Buffer | null;
   buffer: Buffer;
   lastEventAt: number;
@@ -46,76 +47,42 @@ export class MotionDetectionService {
     return this.active.has(cameraId);
   }
 
-  start(camera: Camera, config: DetectionConfig): void {
-    if (this.active.has(camera.id)) return;
-    const rawUrl = camera.subStreamUrl || camera.streamUrl;
-    const url = injectCredentials(rawUrl, camera.username, camera.password);
-    // Caminho do quadro ao vivo reaproveitado por snapshots/preset (getLiveFramesDir()
-    // garante que o diretório exista antes do FFmpeg tentar gravar).
-    const framePath = liveFramePath(camera.id);
-    const args = [
-      '-rtsp_transport', 'tcp',
-      '-i', url,
-      '-an',
-      // Saída 1: quadros cinza 320x180 @3fps para a ANÁLISE de movimento (via pipe).
-      '-vf', `fps=3,scale=${W}:${H},format=gray`,
-      '-f', 'rawvideo',
-      'pipe:1',
-      // Saída 2: um JPEG ao vivo (~1fps, colorido, 1280px) sobrescrito continuamente.
-      // Reaproveitado pelos snapshots e pela captura de preset para NÃO abrir uma nova
-      // sessão RTSP na câmera (principal causa de saturação/quedas nesta instalação).
-      '-vf', 'fps=1,scale=1280:-1',
-      '-q:v', '4',
-      '-update', '1',
-      '-y', framePath,
-    ];
-    const ffmpeg = spawn(FFMPEG_PATH, args);
+  // Consome os quadros cinza da PUXADA ÚNICA do StreamingService (pipe:4), em vez de
+  // abrir a própria sessão RTSP.
+  //
+  // ANTES este serviço spawnava o próprio FFmpeg contra a câmera. Isso era uma 2ª sessão
+  // RTSP concorrente (câmeras XM servem pouquíssimas) e, pior, escrevia no MESMO arquivo
+  // `liveframes/<id>.jpg` que o streaming também escreve — duas escritas simultâneas no
+  // mesmo JPEG corrompiam os snapshots. Agora a análise usa a imagem já decodificada.
+  attachStream(camera: Camera, config: DetectionConfig, stream: NodeJS.ReadableStream): void {
+    this.detach(camera.id); // encerra qualquer alimentação anterior
     const state: MotionState = {
       camera,
       config,
-      ffmpeg,
       prev: null,
       buffer: Buffer.alloc(0),
       lastEventAt: 0,
       recordStopTimer: null,
       recording: false,
     };
-
-    ffmpeg.on('error', (err) => {
-      insertCameraLog(
-        camera.id,
-        camera.name,
-        'error',
-        `Falha ao iniciar detecção de movimento em "${camera.name}"`,
-        `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nUsuário: ${camera.username || '—'}\nURL (sub): ${(camera.subStreamUrl || camera.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nErro FFmpeg: ${err?.message || 'Erro desconhecido'}\n\nA detecção de movimento não pôde ser iniciada. O sistema tentará novamente no próximo ciclo de reconciliação.`,
-        'detection',
-      );
-      this.stop(camera.id);
-    });
-    ffmpeg.on('close', () => {
-      if (this.active.get(camera.id)?.ffmpeg === ffmpeg) {
-        insertCameraLog(
-          camera.id,
-          camera.name,
-          'warn',
-          `Detecção de movimento de "${camera.name}" encerrada inesperadamente`,
-          `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nUsuário: ${camera.username || '—'}\nURL: ${(camera.subStreamUrl || camera.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\nO processo FFmpeg de detecção fechou sozinho. Será reiniciado no próximo ciclo de reconciliação.`,
-          'detection',
-        );
-        this.active.delete(camera.id);
-      }
-    });
-    ffmpeg.stdout.on('data', (chunk: Buffer) => this.onData(camera.id, chunk));
-
     this.active.set(camera.id, state);
+    stream.on('data', (chunk: Buffer) => this.onData(camera.id, chunk));
     insertCameraLog(
       camera.id,
       camera.name,
       'info',
       `Detecção de movimento de "${camera.name}" iniciada`,
-      `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nUsuário: ${camera.username || '—'}\nURL: ${(camera.subStreamUrl || camera.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nSensibilidade: ${config.sensitivity} (limiar: ${sensitivityToThreshold(config.sensitivity).toFixed(1)})\nGravar movimento: ${config.recordMotion ? 'sim' : 'não'}\nCapturar snapshot: ${config.captureSnapshot ? 'sim' : 'não'}\n\nA detecção de movimento foi iniciada com sucesso. O FFmpeg está analisando quadros em 320x180 a 3 fps.`,
+      `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nSensibilidade: ${config.sensitivity} (limiar: ${sensitivityToThreshold(config.sensitivity).toFixed(1)})\nGravar movimento: ${config.recordMotion ? 'sim' : 'não'}\nCapturar snapshot: ${config.captureSnapshot ? 'sim' : 'não'}\n\nA análise usa os quadros da puxada única (320x180 a 3 fps), sem abrir uma segunda sessão RTSP na câmera.`,
       'detection',
     );
+  }
+
+  // Encerra a análise sem log (uso interno: troca de alimentação).
+  private detach(cameraId: string): void {
+    const state = this.active.get(cameraId);
+    if (!state) return;
+    this.active.delete(cameraId);
+    if (state.recordStopTimer) clearTimeout(state.recordStopTimer);
   }
 
   stop(cameraId: string): void {
@@ -129,13 +96,7 @@ export class MotionDetectionService {
       `Câmera: ${state.camera.name}\nIP: ${state.camera.ip}:${state.camera.port}\nUsuário: ${state.camera.username || '—'}\n\nA detecção de movimento foi interrompida intencionalmente.`,
       'detection',
     );
-    this.active.delete(cameraId);
-    if (state.recordStopTimer) clearTimeout(state.recordStopTimer);
-    try {
-      state.ffmpeg.kill('SIGKILL');
-    } catch {
-      /* noop */
-    }
+    this.detach(cameraId); // não há processo próprio para matar: a fonte é a puxada única
   }
 
   stopAll(): void {

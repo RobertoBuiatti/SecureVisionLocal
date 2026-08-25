@@ -33,15 +33,9 @@ class DetectionManager {
     }
     const config = getDetectionConfig(cameraId);
 
-    // Movimento (reinicia para aplicar nova sensibilidade/regras)
-    if (config.motionEnabled) {
-      motionDetectionService.stop(cameraId);
-      motionDetectionService.start(camera, config);
-    } else if (motionDetectionService.isActive(cameraId)) {
-      motionDetectionService.stop(cameraId);
-    }
-
-    // IA: alimentada pela PUXADA ÚNICA do StreamingService (mesma imagem, sem nova sessão).
+    // Movimento e IA: ambos alimentados pela PUXADA ÚNICA do StreamingService
+    // (mesma imagem já decodificada, sem abrir nova sessão RTSP na câmera).
+    void streamingService.setMotion(camera, config, !!config.motionEnabled);
     void streamingService.setDetection(camera, config, !!config.aiEnabled);
   }
 
@@ -54,24 +48,18 @@ class DetectionManager {
       // Duplicata do mesmo dispositivo: desliga detecção (evita 2ª sessão RTSP do motion
       // e 2ª puxada da IA). Só o cadastro principal detecta.
       if (isDuplicateShadow(camera, cams)) {
-        if (motionDetectionService.isActive(camera.id)) motionDetectionService.stop(camera.id);
-        void streamingService.setDetection(camera, getDetectionConfig(camera.id), false);
+        const cfg = getDetectionConfig(camera.id);
+        void streamingService.setMotion(camera, cfg, false);
+        void streamingService.setDetection(camera, cfg, false);
         continue;
       }
       const config = getDetectionConfig(camera.id);
-      const reachable = camera.status !== 'offline';
 
-      // Movimento: serviço próprio (só sobe quando alcançável, evita respawn em loop).
-      if (config.motionEnabled && reachable) {
-        if (!motionDetectionService.isActive(camera.id)) {
-          motionDetectionService.start(camera, config);
-        }
-      } else if (!config.motionEnabled && motionDetectionService.isActive(camera.id)) {
-        motionDetectionService.stop(camera.id);
-      }
-
-      // IA: alimentada pela puxada única do StreamingService (que já reconecta sozinho,
-      // então não precisa do gate de "offline" — a puxada persiste e se recupera).
+      // Movimento e IA saem da puxada única do StreamingService (que já reconecta sozinho,
+      // então nenhum dos dois precisa do antigo gate de "offline" — a puxada persiste e se
+      // recupera). Antes o movimento tinha FFmpeg próprio: era uma 2ª sessão RTSP na câmera
+      // e disputava a escrita do quadro ao vivo com o streaming.
+      void streamingService.setMotion(camera, config, !!config.motionEnabled);
       void streamingService.setDetection(camera, config, !!config.aiEnabled);
     }
   }

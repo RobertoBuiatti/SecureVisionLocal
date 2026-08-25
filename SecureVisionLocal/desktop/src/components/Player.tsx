@@ -64,7 +64,14 @@ export function Player({ cameraId }: { cameraId: string }) {
 
   return (
     <div className="player">
-      <canvas ref={canvasRef} className="player-canvas" />
+      {/* O canvas do jsmpeg nasce BRANCO e só escurece quando chega o primeiro quadro —
+          em tela cheia isso vira um monitor inteiro branco enquanto a câmera conecta (ou
+          se o sinal cai). Enquanto não há imagem ele fica transparente e aparece o fundo
+          preto do bloco, que é o que se espera de um monitor de CFTV. */}
+      <canvas
+        ref={canvasRef}
+        className={error || connecting ? 'player-canvas idle' : 'player-canvas'}
+      />
       {error && <div className="player-error">⚠ {error}</div>}
       {!error && connecting && <div className="player-connecting">Conectando…</div>}
     </div>

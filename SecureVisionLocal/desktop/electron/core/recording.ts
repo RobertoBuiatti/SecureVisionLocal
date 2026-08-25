@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { statSync } from 'node:fs';
+import { statSync, unlink } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { FFMPEG_PATH } from './ffmpegPath';
@@ -13,7 +13,16 @@ import { injectCredentials } from './onvifInfo';
 
 interface ActiveRecording {
   recording: Recording;
-  ffmpeg: ChildProcess;
+  ffmpeg: ChildProcess | null; // null quando o clipe vem da puxada única
+  tsPath?: string; // arquivo MPEG-TS intermediário do clipe derivado da puxada única
+}
+
+// Fonte de clipe derivada da puxada única do StreamingService. Injetada no main para não
+// criar dependência circular (streaming → motionDetection → recording → streaming).
+export interface ClipSource {
+  isActive: (cameraId: string) => boolean;
+  start: (cameraId: string, tsPath: string) => boolean;
+  stop: (cameraId: string, onClosed?: () => void) => void;
 }
 
 function timestampName(prefix: string): string {
@@ -35,6 +44,12 @@ const DETECTION_FILE_LABEL: Record<DetectionType, string> = {
 // Gerencia gravações em disco local. Usa `-c copy` (sem reencode) para baixo uso de CPU.
 export class RecordingService {
   private active = new Map<string, ActiveRecording>();
+  private clipSource?: ClipSource;
+
+  // Ver `ClipSource`. Sem isto, o serviço mantém o comportamento antigo (sessão RTSP nova).
+  setClipSource(source: ClipSource): void {
+    this.clipSource = source;
+  }
 
   isRecording(cameraId: string): boolean {
     return this.active.has(cameraId);
@@ -71,9 +86,29 @@ export class RecordingService {
       hasMotion: detectionType === 'motion',
     };
 
+    // CAMINHO PREFERIDO: derivar o clipe da puxada única já aberta. Zero conexão nova na
+    // câmera. Só cai para o RTSP direto quando não há puxada ativa para esta câmera.
+    if (this.clipSource?.isActive(camera.id)) {
+      const tsPath = filePath.replace(/\.mp4$/, '.ts');
+      if (this.clipSource.start(camera.id, tsPath)) {
+        insertRecording(recording);
+        this.active.set(camera.id, { recording, ffmpeg: null, tsPath });
+        insertCameraLog(
+          camera.id,
+          camera.name,
+          'info',
+          `Gravação por detecção de "${camera.name}" iniciada (${detectionType || 'manual'})`,
+          `Câmera: ${camera.name}\nIP: ${camera.ip}:${camera.port}\nTipo: ${detectionType || 'manual'}\nArquivo: ${filePath}\n\nO clipe está sendo derivado da puxada única já aberta (mesma imagem do vídeo ao vivo), SEM abrir uma segunda sessão RTSP na câmera. Se a gravação 24/7 estiver ligada, o vídeo em qualidade original do mesmo instante também continua nos segmentos contínuos.`,
+          'recording',
+        );
+        return recording;
+      }
+    }
+
     const streamUrl = injectCredentials(camera.streamUrl, camera.username, camera.password);
     const args = [
       '-rtsp_transport', 'tcp',
+      '-timeout', '10000000', // 10s: sem isto o processo podia ficar pendurado na câmera
       '-i', streamUrl,
       // Mapeamento explícito com áudio OPCIONAL ("0:a?"): câmeras sem faixa de áudio
       // não derrubam mais o FFmpeg — ele grava só o vídeo.
@@ -121,6 +156,13 @@ export class RecordingService {
       `Câmera: ${camName}\nArquivo: ${item.recording.filePath}\nDuração até o momento: ${Math.round((Date.now() - item.recording.startTime) / 1000)}s\n\nEnviando comando de parada para o FFmpeg. O arquivo será finalizado com trailer MP4 correto.`,
       'recording',
     );
+    // Clipe derivado da puxada única: fecha o MPEG-TS e remuxa para MP4 (arquivo local,
+    // `-c copy`, sem reencode e sem tocar na câmera).
+    if (!item.ffmpeg) {
+      this.clipSource?.stop(cameraId, () => this.remuxClip(cameraId));
+      return;
+    }
+
     try {
       // 'q' faz o FFmpeg encerrar gravando o trailer do MP4 corretamente.
       item.ffmpeg.stdin?.write('q');
@@ -131,6 +173,34 @@ export class RecordingService {
         /* noop */
       }
     }
+  }
+
+  // Converte o MPEG-TS do clipe em MP4 reproduzível. Só remuxa (sem reencode).
+  private remuxClip(cameraId: string): void {
+    const item = this.active.get(cameraId);
+    if (!item?.tsPath) {
+      this.handleClosed(cameraId);
+      return;
+    }
+    const { tsPath } = item;
+    const args = [
+      '-i', tsPath,
+      '-c', 'copy',
+      '-movflags', '+faststart',
+      '-y', item.recording.filePath,
+    ];
+    const ff = spawn(FFMPEG_PATH, args, { stdio: 'ignore' });
+    let done = false; // 'error' e 'close' podem disparar os dois para o mesmo processo
+    const finish = (): void => {
+      if (done) return;
+      done = true;
+      unlink(tsPath, () => {
+        /* o .ts intermediário não interessa depois do remux */
+      });
+      this.handleClosed(cameraId);
+    };
+    ff.on('error', finish);
+    ff.on('close', finish);
   }
 
   stopAll(): void {

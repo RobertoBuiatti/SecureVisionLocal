@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
+import { createWriteStream, type WriteStream } from 'node:fs';
 import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
 import { FFMPEG_PATH } from './ffmpegPath';
@@ -8,6 +9,7 @@ import { injectCredentials } from './onvifInfo';
 import { insertCameraLog } from './cameraLogger';
 import { liveFramePath, freshLiveFrame } from './liveFrameCache';
 import { aiDetectVf } from './ai/aiDetection';
+import { motionVf } from './motionDetection';
 import type { Camera, StreamInfo, DetectionConfig } from '../../src/shared/types';
 
 // Callbacks para a detecção IA consumir os quadros da puxada única (injetados no main).
@@ -17,6 +19,9 @@ type DetectionAttach = (
   stream: NodeJS.ReadableStream,
 ) => void;
 type DetectionDetach = (cameraId: string) => void;
+// Mesmo contrato para a detecção de MOVIMENTO, que também passou a consumir a puxada única.
+type MotionAttach = DetectionAttach;
+type MotionDetach = DetectionDetach;
 
 const RECONNECT_DELAY_MS = 3000;
 // Faixa de portas dos WebSockets de vídeo. Bind SOMENTE em loopback: o consumidor é o
@@ -28,17 +33,24 @@ const WS_PORT_MAX = 9400;
 const STALL_TIMEOUT_MS = { high: 30000, low: 45000 };
 const WATCHDOG_INTERVAL_MS = 3000; // frequência de checagem do travamento
 const MAX_STALLS_BEFORE_FAILOVER = 3; // quantos stalls consecutivos em high antes de cair p/ low
-// Probe de restauração do HD deliberadamente LENTO: em câmera 8MP via WiFi o HD raramente
-// estabiliza, e cada probe abre uma sessão 8MP que satura a rede. Espaçar bastante evita
-// que o probe atrapalhe o vídeo/gravação. (Antes: 60s / 30s → agressivo demais.)
-// O probe de restauração do HD abre uma 2ª sessão RTSP 8MP na câmera. Em XM/8MP (que
-// serve pouquíssimas sessões) isso COMPETE com o vídeo ao vivo do sub-stream e causa
-// micro-cortes. Como o sub-stream é aceitável, o probe é DELIBERADAMENTE raro e limitado:
-// fica bastante tempo no sub antes de arriscar o HD, e desiste após poucas tentativas.
+// Restauração automática do HD (sub-stream → main-stream).
+//
+// ANTES isto era um "probe": um 2º FFmpeg espião abria uma sessão RTSP 8MP PARALELA na
+// câmera só para testar se o HD estava estável. Em XM/8MP (que serve pouquíssimas sessões)
+// essa 2ª sessão COMPETIA com o vídeo ao vivo e derrubava tudo. Pior: o probe era spawnado
+// com stdout 'ignore' e saída "-f null -", então nunca produzia o sinal de estabilidade
+// que ele mesmo esperava — ficava pendurado na câmera indefinidamente, sem ninguém para
+// matá-lo (o processo não era guardado em lugar nenhum).
+//
+// AGORA a promoção acontece na PRÓPRIA puxada única: troca-se a qualidade e respawna-se o
+// mesmo FFmpeg. Zero sessão extra. Se o HD não abrir ou travar, o failover que já existe
+// devolve ao sub-stream e a próxima tentativa é agendada com backoff.
 const MIN_TIME_IN_LOW_MS = 1_800_000; // 30min no sub antes de tentar o HD
-const PROBE_STABLE_MS = 10_000; // probe no high deve ficar estável 10s antes de confirmar troca
-const PROBE_RETRY_BASE_MS = 900_000; // base do backoff se o probe falhar (15min, 30min, 60min…)
-const MAX_PROBE_ATTEMPTS = 6; // após isso, FICA no sub e para de tentar HD (sem novas sessões 8MP)
+const HIGH_RETRY_BASE_MS = 900_000; // backoff entre tentativas de HD (15min, 30min, 60min…)
+const MAX_HIGH_ATTEMPTS = 6; // após isso, FICA no sub (o HD volta a ser tentado ao reabrir o stream)
+// Limite de bytes enfileirados por cliente WebSocket antes de descartar quadro. Sem isto,
+// um renderer lento faz o `ws` acumular vídeo na memória do processo principal sem teto.
+const WS_MAX_BUFFERED_BYTES = 4_000_000;
 
 // Caminhos RTSP alternativos para câmeras cujo ONVIF retorna URL genérica (apenas "/").
 // Muitas marcas (Xiongmai, Hikvision, Intelbras/Dahua, TP-Link, Reolink, Foscam,
@@ -157,21 +169,28 @@ interface ActiveStream {
   watchdog?: ReturnType<typeof setInterval>;
   urlCandidates: string[]; // URLs a tentar (fallback paths)
   urlAttempt: number; // índice atual em urlCandidates
+  // URL que JÁ entregou quadro nesta qualidade. Enquanto existir, a reconexão usa só ela
+  // em vez de varrer os ~59 fallbacks — essa varredura dispara dezenas de conexões RTSP
+  // em rajada contra a câmera e é ela mesma uma causa de travamento em câmeras XM.
+  workingUrl?: string;
   stallCount: number; // stalls consecutivos na qualidade atual (reset ao trocar qualidade)
   reconnectCount: number; // tentativas de reconexão consecutivas (para backoff)
   hwFailed?: boolean; // aceleração de HW abriu o RTSP mas não produziu quadro → usar software (comum em HEVC/dxva2)
-  // Probe de estabilidade para voltar ao high
-  probeTimer?: ReturnType<typeof setTimeout>;
-  probeAttempt: number; // tentativa de probe (para backoff exponencial)
+  // Restauração automática do HD (na própria puxada, sem 2ª sessão)
+  highTimer?: ReturnType<typeof setTimeout>;
+  highAttempt: number; // tentativas de promoção ao HD (para backoff exponencial)
   lowSince?: number; // timestamp quando entrou em low
   // Fonte única: a MESMA puxada alimenta vários usos, decodificando uma vez só.
   viewerActive?: boolean; // há visualização ao vivo ativa
   record?: boolean; // gravar segmentos MP4 desta puxada
   detect?: boolean; // alimentar a detecção IA com os quadros desta puxada
+  motion?: boolean; // alimentar a detecção de MOVIMENTO com os quadros desta puxada
   verify?: boolean; // verificação/autoajuste de posição consumindo o liveFrame desta puxada
   detectConfig?: DetectionConfig;
+  motionConfig?: DetectionConfig;
   recDir?: string; // diretório dos segmentos de gravação
   segmentSeconds?: number;
+  eventClip?: WriteStream; // clipe de evento derivado desta puxada (MPEG-TS), se houver
 }
 
 export type StreamStatusEvent = {
@@ -189,6 +208,8 @@ export class StreamingService {
   private notifier?: Notifier;
   private detectionAttach?: DetectionAttach;
   private detectionDetach?: DetectionDetach;
+  private motionAttach?: MotionAttach;
+  private motionDetach?: MotionDetach;
 
   setNotifier(notifier: Notifier): void {
     this.notifier = notifier;
@@ -208,9 +229,15 @@ export class StreamingService {
     this.detectionDetach = detach;
   }
 
+  // Idem para a detecção de MOVIMENTO (antes ela abria a própria sessão RTSP).
+  setMotionSink(attach: MotionAttach, detach: MotionDetach): void {
+    this.motionAttach = attach;
+    this.motionDetach = detach;
+  }
+
   // Verdadeiro se algo ainda precisa da puxada (visualização, gravação ou detecção).
   private stillNeeded(state: ActiveStream): boolean {
-    return !!(state.viewerActive || state.record || state.detect || state.verify);
+    return !!(state.viewerActive || state.record || state.detect || state.motion || state.verify);
   }
 
   // Mantém a puxada única viva durante a verificação/autoajuste de posição, para que ela
@@ -261,7 +288,7 @@ export class StreamingService {
       camera,
       quality,
       stallCount: 0,
-      probeAttempt: 0,
+      highAttempt: 0,
       lastDataAt: Date.now(),
       urlCandidates: this.buildUrlCandidates(camera, quality),
       urlAttempt: 0,
@@ -360,10 +387,37 @@ export class StreamingService {
     this.reconfigure(st);
   }
 
+  // Liga/desliga a alimentação da DETECÇÃO DE MOVIMENTO a partir desta puxada única.
+  async setMotion(camera: Camera, config: DetectionConfig, on: boolean): Promise<void> {
+    if (!on) {
+      const st = this.streams.get(camera.id);
+      if (!st || !st.motion) return;
+      st.motion = false;
+      st.motionConfig = undefined;
+      this.motionDetach?.(camera.id);
+      if (!this.stillNeeded(st)) this.stop(camera.id);
+      else this.reconfigure(st);
+      return;
+    }
+    const st = await this.ensureState(
+      camera,
+      this.streams.get(camera.id)?.preferredQuality ?? 'high',
+    );
+    const sameConfig = st.motion && JSON.stringify(st.motionConfig) === JSON.stringify(config);
+    if (sameConfig) {
+      if (!st.ffmpeg) this.spawnCameraFfmpeg(st);
+      return;
+    }
+    st.motion = true;
+    st.motionConfig = config;
+    this.reconfigure(st);
+  }
+
   // Reinicia o FFmpeg da puxada única para aplicar mudança de saídas (gravação/detecção).
   private reconfigure(state: ActiveStream): void {
     if (state.stopping) return;
     this.detectionDetach?.(state.cameraId); // será reanexada no novo spawn, se ainda ligada
+    this.motionDetach?.(state.cameraId);
     if (state.reconnectTimer) {
       clearTimeout(state.reconnectTimer);
       state.reconnectTimer = undefined;
@@ -414,10 +468,12 @@ export class StreamingService {
 
   private startWatchdog(state: ActiveStream): void {
     if (state.watchdog) return;
-    const quality = state.quality; // agora obrigatório
-    const timeout = STALL_TIMEOUT_MS[quality];
     state.watchdog = setInterval(() => {
       if (state.stopping || !state.ffmpeg || state.reconnectTimer) return;
+      // Lido a cada tique (e não capturado na criação): depois de um failover high→low
+      // o watchdog precisa passar a usar o timeout mais tolerante do sub-stream, senão
+      // continua cobrando 30s de um stream que tem direito a 45s e reinicia à toa.
+      const timeout = STALL_TIMEOUT_MS[state.quality];
       if (Date.now() - state.lastDataAt > timeout) {
         const camera = state.camera;
         const name = camera?.name || state.cameraId;
@@ -438,6 +494,75 @@ export class StreamingService {
         this.restartStalled(state);
       }
     }, WATCHDOG_INTERVAL_MS);
+  }
+
+  // Agenda a próxima tentativa de voltar ao main-stream (HD) enquanto a puxada está no
+  // sub-stream. A tentativa acontece NA PRÓPRIA puxada (ver `promoteToHigh`), então nunca
+  // abre uma 2ª sessão RTSP na câmera — foi exatamente isso que o antigo "probe" fazia.
+  private scheduleHighRetry(state: ActiveStream): void {
+    if (state.stopping) return;
+    if (state.preferredQuality !== 'high' || state.quality !== 'low') return;
+    if (state.highTimer) return; // já agendado
+    // Esgotou as tentativas: fica no sub-stream (estável) e para de insistir no HD. O
+    // contador passa de MAX para que este aviso saia UMA vez, e não a cada reconexão.
+    if (state.highAttempt >= MAX_HIGH_ATTEMPTS) {
+      if (state.highAttempt === MAX_HIGH_ATTEMPTS) {
+        state.highAttempt += 1;
+        const name = state.camera?.name || state.cameraId;
+        insertCameraLog(
+          state.cameraId,
+          name,
+          'info',
+          `Mantendo sub-stream de "${name}" — auto-restauração do HD pausada`,
+          `Câmera: ${name}\nApós ${MAX_HIGH_ATTEMPTS} tentativas o stream principal não estabilizou. O app fica no sub-stream (conexão estável) e PARA de tentar reabrir o HD automaticamente. O HD volta a ser tentado ao reabrir a câmera/stream.`,
+          'streaming',
+        );
+      }
+      return;
+    }
+
+    // Na 1ª tentativa espera o tempo mínimo em low; nas seguintes, backoff exponencial.
+    const timeInLow = state.lowSince ? Date.now() - state.lowSince : 0;
+    const delay =
+      state.highAttempt === 0
+        ? Math.max(0, MIN_TIME_IN_LOW_MS - timeInLow)
+        : HIGH_RETRY_BASE_MS * Math.min(2 ** (state.highAttempt - 1), 8);
+
+    state.highTimer = setTimeout(() => {
+      state.highTimer = undefined;
+      this.promoteToHigh(state);
+    }, delay);
+  }
+
+  // Tenta voltar ao HD trocando a qualidade da puxada única e respawnando o MESMO FFmpeg.
+  // Se o HD não abrir (ou travar depois), o failover que já existe devolve ao sub-stream e
+  // agenda a próxima tentativa. Em nenhum momento há duas sessões RTSP na câmera.
+  private promoteToHigh(state: ActiveStream): void {
+    const camera = state.camera;
+    if (!camera || state.stopping || state.quality !== 'low') return;
+    if (state.preferredQuality !== 'high') return;
+
+    state.highAttempt += 1;
+    const name = camera.name || state.cameraId;
+
+    insertCameraLog(
+      state.cameraId,
+      name,
+      'info',
+      `Tentando restaurar a alta qualidade de "${name}" (tentativa ${state.highAttempt}/${MAX_HIGH_ATTEMPTS})`,
+      `Câmera: ${name}\nIP: ${camera.ip}:${camera.port}\n\nA puxada única será reaberta no stream principal. Se ele não abrir ou travar, o app volta sozinho ao sub-stream e tenta de novo mais tarde. Nenhuma sessão RTSP paralela é aberta na câmera.`,
+      'streaming',
+    );
+
+    // `failoverActive` volta a false para que o failover possa atuar de novo se o HD falhar.
+    state.quality = 'high';
+    state.failoverActive = false;
+    state.stallCount = 0;
+    state.reconnectCount = 0;
+    state.urlCandidates = this.buildUrlCandidates(camera, 'high');
+    state.urlAttempt = 0;
+    state.workingUrl = undefined; // outra qualidade, outra URL boa
+    this.reconfigure(state);
   }
 
   // Reinicia o FFmpeg de um stream travado sem disparar a reconexão dupla do 'close'.
@@ -489,7 +614,9 @@ export class StreamingService {
     if (state.stopping || !state.camera) return;
     state.lastDataAt = Date.now();
     const camera = state.camera;
-    const url = state.urlCandidates[state.urlAttempt];
+    // URL já comprovada tem prioridade absoluta: evita revarrer a lista de fallbacks
+    // (e disparar dezenas de conexões RTSP) toda vez que a câmera pisca.
+    const url = state.workingUrl ?? state.urlCandidates[state.urlAttempt];
     if (!url || !isSafeStreamUrl(url)) {
       insertCameraLog(
         state.cameraId,
@@ -553,11 +680,19 @@ export class StreamingService {
       // Saída 4: quadros RGB para a inferência YOLO → pipe:3 (consumido localmente, no PC).
       outputs.push('-map', '0:v:0', '-an', '-vf', aiDetectVf(), '-f', 'rawvideo', 'pipe:3');
     }
+    const feedMotion = !!(state.motion && state.motionConfig?.motionEnabled && this.motionAttach);
+    if (feedMotion) {
+      // Saída 5: quadros cinza 320x180 para a análise de MOVIMENTO → pipe:4.
+      outputs.push('-map', '0:v:0', '-an', '-vf', motionVf(), '-f', 'rawvideo', 'pipe:4');
+    }
 
     const args = [...inputArgs, ...outputs];
-    const stdio: Array<'ignore' | 'pipe'> = feedDetect
-      ? ['ignore', 'pipe', 'pipe', 'pipe']
-      : ['ignore', 'pipe', 'pipe'];
+    // stdio: 0=stdin, 1=vídeo ao vivo, 2=stderr, 3=IA, 4=movimento. Os descritores extras
+    // só viram 'pipe' quando a saída correspondente existe — as posições são FIXAS para
+    // que "pipe:3"/"pipe:4" nos argumentos sempre correspondam ao mesmo consumidor.
+    const stdio: Array<'ignore' | 'pipe'> = ['ignore', 'pipe', 'pipe'];
+    if (feedDetect || feedMotion) stdio.push(feedDetect ? 'pipe' : 'ignore');
+    if (feedMotion) stdio.push('pipe');
     const ffmpeg = spawn(FFMPEG_PATH, args, { stdio });
     state.ffmpeg = ffmpeg;
 
@@ -565,6 +700,11 @@ export class StreamingService {
     if (feedDetect && state.camera && state.detectConfig) {
       const detStream = ffmpeg.stdio[3] as NodeJS.ReadableStream | undefined;
       if (detStream) this.detectionAttach?.(state.camera, state.detectConfig, detStream);
+    }
+    // Idem para a detecção de movimento.
+    if (feedMotion && state.camera && state.motionConfig) {
+      const motStream = ffmpeg.stdio[4] as NodeJS.ReadableStream | undefined;
+      if (motStream) this.motionAttach?.(state.camera, state.motionConfig, motStream);
     }
 
     // Captura stderr do FFmpeg para diagnóstico (RTSP errors, etc.)
@@ -627,6 +767,14 @@ export class StreamingService {
         state.gotData = true;
         state.stallCount = 0; // reset stall count ao conectar com sucesso
         state.reconnectCount = 0; // reset reconexão ao conectar
+        // Esta URL entregou quadro: fixa como a boa. As reconexões seguintes usam só ela,
+        // em vez de varrer os ~59 fallbacks disparando conexões RTSP em rajada na câmera.
+        state.workingUrl = state.urlCandidates[state.urlAttempt];
+        if (state.quality === 'high') {
+          // O HD voltou de fato: zera o contador de tentativas de promoção.
+          state.highAttempt = 0;
+          state.lowSince = undefined;
+        }
         const camera = state.camera;
         const name = camera?.name || state.cameraId;
         insertCameraLog(
@@ -639,8 +787,16 @@ export class StreamingService {
         );
         this.notifier?.({ cameraId: state.cameraId, status: 'running' });
       }
+      // Clipe de evento: escreve o MESMO MPEG-TS que vai para a tela. Não custa nada à
+      // câmera — os bytes já existem.
+      state.eventClip?.write(chunk);
       for (const client of state.wss.clients) {
-        if (client.readyState === client.OPEN) client.send(chunk);
+        // Sem este teto, um renderer lento faz o `ws` acumular vídeo na heap do processo
+        // principal indefinidamente. Vídeo ao vivo é descartável: perder quadro é melhor
+        // que estourar memória e travar o main (que também é quem drena o FFmpeg).
+        if (client.readyState === client.OPEN && client.bufferedAmount < WS_MAX_BUFFERED_BYTES) {
+          client.send(chunk);
+        }
       }
     });
     ffmpeg.on('close', () => {
@@ -663,165 +819,22 @@ export class StreamingService {
         state.failoverActive = true;
         state.quality = nextQuality;
         state.lowSince = Date.now(); // marca quando entrou em low
-        state.probeAttempt = 0; // reset tentativas de probe
         state.stallCount = 0; // reset ao trocar qualidade
         state.urlCandidates = this.buildUrlCandidates(camera, nextQuality);
         state.urlAttempt = 0;
+        state.workingUrl = undefined; // outra qualidade, outra URL boa
         insertCameraLog(
           state.cameraId,
           name,
           'warn',
           `Failover automático: "${name}" caindo para qualidade baixa (sub-stream)`,
-          `Câmera: ${name}\nIP: ${camera.ip}:${camera.port}\nQualidade preferida: ${state.preferredQuality}\nNova qualidade: ${nextQuality}\nStalls consecutivos: ${stalls}\nURL sub-stream: ${(camera.subStreamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\n${force ? 'O stream principal (alta qualidade) não pôde ser aberto — comum em câmera 8MP via WiFi.' : `O stream de alta qualidade travou ${stalls}x.`} Usando o sub-stream como fallback. O probe tentará restaurar a alta qualidade quando ela ficar estável.`,
+          `Câmera: ${name}\nIP: ${camera.ip}:${camera.port}\nQualidade preferida: ${state.preferredQuality}\nNova qualidade: ${nextQuality}\nStalls consecutivos: ${stalls}\nURL sub-stream: ${(camera.subStreamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\n${force ? 'O stream principal (alta qualidade) não pôde ser aberto — comum em câmera 8MP via WiFi.' : `O stream de alta qualidade travou ${stalls}x.`} Usando o sub-stream como fallback. A alta qualidade será tentada de novo mais tarde, NA MESMA puxada (sem abrir uma 2ª sessão RTSP na câmera).`,
           'streaming',
         );
         this.notifier?.({ cameraId: state.cameraId, status: 'error', error: 'Alta qualidade indisponível. Tentando baixa…' });
         this.spawnCameraFfmpeg(state);
+        this.scheduleHighRetry(state); // volta a tentar o HD depois, sem sessão paralela
         return true;
-      };
-
-      // Probe de estabilidade para voltar ao high: inicia FFmpeg "espião" no high,
-      // só troca o stream principal se ficar estável por PROBE_STABLE_MS.
-      const scheduleProbeToHigh = () => {
-        if (state.preferredQuality !== 'high' || state.quality !== 'low' || state.probeTimer) return;
-        const timeInLow = state.lowSince ? Date.now() - state.lowSince : 0;
-        if (timeInLow < MIN_TIME_IN_LOW_MS) {
-          // Ainda não passou tempo mínimo em low, agenda para depois
-          const waitMs = MIN_TIME_IN_LOW_MS - timeInLow;
-          state.probeTimer = setTimeout(() => {
-            state.probeTimer = undefined;
-            scheduleProbeToHigh();
-          }, waitMs);
-          return;
-        }
-        // Inicia probe
-        startProbeToHigh(state);
-      };
-
-      const startProbeToHigh = (st: ActiveStream) => {
-        const cam = st.camera;
-        if (!cam || st.stopping || st.quality !== 'low') return;
-        const probeUrl = this.buildUrlCandidates(cam, 'high')[0];
-        if (!probeUrl || !isSafeStreamUrl(probeUrl)) {
-          scheduleProbeRetry(st);
-          return;
-        }
-        insertCameraLog(
-          st.cameraId,
-          name,
-          'info',
-          `Probe de estabilidade: testando alta qualidade para "${name}"`,
-          `Câmera: ${name}\nIP: ${cam.ip}:${cam.port}\nTentativa probe: ${st.probeAttempt + 1}\nURL teste: ${probeUrl.replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\nVerificando se stream principal está estável antes de trocar.`,
-          'streaming',
-        );
-
-        const probeArgs = [
-          ...(st.hwFailed ? [] : hwaccelArgs()),
-          '-rtsp_transport', 'tcp',
-          '-timeout', '10000000',
-          '-fflags', 'nobuffer',
-          '-flags', 'low_delay',
-          '-analyzeduration', '1000000',
-          '-probesize', '500000',
-          '-i', probeUrl,
-          '-f', 'null',
-          '-',
-        ];
-const probe = spawn(FFMPEG_PATH, probeArgs, { stdio: ['ignore', 'ignore', 'pipe'] });
-        const probeStdout = probe.stdout as NodeJS.ReadableStream | null;
-        let probeStableSince = 0;
-        let probeFailed = false;
-
-        const onProbeData = () => {
-          if (probeStableSince === 0) probeStableSince = Date.now();
-        };
-        probeStdout?.on('data', onProbeData);
-
-        const cleanupProbe = () => {
-          probeStdout?.off('data', onProbeData);
-          probe.removeAllListeners('close');
-          probe.removeAllListeners('error');
-          try { probe.kill('SIGKILL'); } catch {}
-        };
-
-        const checkProbeStable = () => {
-          if (st.stopping || st.quality !== 'low') {
-            cleanupProbe();
-            return;
-          }
-          const now = Date.now();
-          if (probeStableSince > 0 && now - probeStableSince >= PROBE_STABLE_MS) {
-            // Probe estável por 10s — confirma troca para high
-            cleanupProbe();
-            insertCameraLog(
-              st.cameraId,
-              name,
-              'info',
-              `Probe estável: restaurando alta qualidade para "${name}"`,
-              `Câmera: ${name}\nIP: ${cam.ip}:${cam.port}\nProbe ficou estável por ${PROBE_STABLE_MS / 1000}s. Trocando stream principal.`,
-              'streaming',
-            );
-            st.quality = 'high';
-            st.failoverActive = false;
-            st.lowSince = undefined;
-            st.probeAttempt = 0;
-            st.stallCount = 0;
-            st.urlCandidates = this.buildUrlCandidates(cam, 'high');
-            st.urlAttempt = 0;
-            this.spawnCameraFfmpeg(st);
-            return;
-          }
-          if (!probeFailed) {
-            st.probeTimer = setTimeout(checkProbeStable, 1000);
-          }
-        };
-        checkProbeStable();
-
-        probe.on('error', () => {
-          if (!probeFailed) {
-            probeFailed = true;
-            cleanupProbe();
-            scheduleProbeRetry(st);
-          }
-        });
-        probe.on('close', () => {
-          if (!probeFailed) {
-            probeFailed = true;
-            cleanupProbe();
-            scheduleProbeRetry(st);
-          }
-        });
-      };
-
-      const scheduleProbeRetry = (st: ActiveStream) => {
-        if (st.stopping || st.quality !== 'low') return;
-        st.probeAttempt = (st.probeAttempt || 0) + 1;
-        // Limite: após MAX_PROBE_ATTEMPTS, para de tentar o HD e fica no sub-stream
-        // (estável). Evita abrir novas sessões 8MP que competem com o vídeo ao vivo.
-        if (st.probeAttempt > MAX_PROBE_ATTEMPTS) {
-          insertCameraLog(
-            st.cameraId,
-            name,
-            'info',
-            `Mantendo sub-stream de "${name}" — auto-restauração do HD pausada`,
-            `Câmera: ${name}\nApós ${MAX_PROBE_ATTEMPTS} tentativas o HD (8MP) não estabilizou. O app fica no sub-stream (conexão estável) e PARA de tentar reabrir o HD automaticamente — assim não abre mais sessões 8MP concorrentes na câmera. O HD volta a ser tentado ao reabrir a câmera/stream.`,
-            'streaming',
-          );
-          return;
-        }
-        const backoff = PROBE_RETRY_BASE_MS * Math.min(2 ** (st.probeAttempt - 1), 8);
-        insertCameraLog(
-          st.cameraId,
-          name,
-          'info',
-          `Probe falhou, nova tentativa em ${Math.round(backoff / 1000)}s ("${name}")`,
-          `Câmera: ${name}\nIP: ${st.camera?.ip || '—'}:${st.camera?.port || '—'}\nTentativa probe: ${st.probeAttempt}\nBackoff: ${Math.round(backoff / 1000)}s`,
-          'streaming',
-        );
-        st.probeTimer = setTimeout(() => {
-          st.probeTimer = undefined;
-          startProbeToHigh(st);
-        }, backoff);
       };
 
       if (neverConnected) {
@@ -847,6 +860,27 @@ const probe = spawn(FFMPEG_PATH, probeArgs, { stdio: ['ignore', 'ignore', 'pipe'
           }, 300);
           return;
         }
+        // URL já comprovada falhando: quase sempre é a câmera fora do ar ou troca de IP,
+        // não caminho errado. Reconecta com backoff na MESMA URL em vez de bombardear a
+        // câmera com a lista inteira. Só após várias falhas seguidas volta a varrer.
+        if (state.workingUrl) {
+          const RESCAN_AFTER_FAILURES = 5;
+          if (state.reconnectCount >= RESCAN_AFTER_FAILURES) {
+            insertCameraLog(
+              state.cameraId,
+              name,
+              'warn',
+              `URL conhecida de "${name}" falhou ${state.reconnectCount}x — voltando a testar caminhos alternativos`,
+              `Câmera: ${name}\nURL que funcionava: ${state.workingUrl.replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\nA URL que vinha funcionando parou de responder repetidas vezes. O app volta a testar a lista de caminhos RTSP alternativos (pode ter havido atualização de firmware na câmera).`,
+              'streaming',
+            );
+            state.workingUrl = undefined;
+            state.urlAttempt = 0;
+          } else {
+            this.healRequester?.(state.cameraId); // pode ser troca de IP por DHCP
+          }
+        }
+
         // Nunca conectou: tenta próxima URL na lista de fallbacks
         const nextAttempt = state.urlAttempt + 1;
         const hasMoreUrls = nextAttempt < state.urlCandidates.length;
@@ -859,7 +893,7 @@ const probe = spawn(FFMPEG_PATH, probeArgs, { stdio: ['ignore', 'ignore', 'pipe'
           `Câmera: ${name}\nIP: ${camera?.ip || '—'}:${camera?.port || '—'}\nUsuário: ${camera?.username || '—'}\nURL principal: ${(camera?.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nURL secundária: ${(camera?.subStreamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\nURL testada: ${state.urlCandidates[state.urlAttempt].replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nTentativas restantes: ${hasMoreUrls ? state.urlCandidates.length - nextAttempt : 0}\n\nCausa provável: URL incorreta, credenciais inválidas ou câmera desligada/inacessível na rede. O FFmpeg nunca conseguiu receber quadros.${ffmpegError}`,
           'streaming',
         );
-        if (hasMoreUrls) {
+        if (hasMoreUrls && !state.workingUrl) {
           state.urlAttempt = nextAttempt;
           state.reconnectTimer = setTimeout(() => {
             state.reconnectTimer = undefined;
@@ -899,10 +933,38 @@ const probe = spawn(FFMPEG_PATH, probeArgs, { stdio: ['ignore', 'ignore', 'pipe'
         state.reconnectTimer = undefined;
         if (neverConnected) state.urlAttempt = 0; // reinicia tentativas do início
         this.spawnCameraFfmpeg(state);
-        // Se está em failover (low), agenda probe para voltar ao high
-        scheduleProbeToHigh();
+        // Se está em failover (low), mantém agendada a retentativa do HD.
+        this.scheduleHighRetry(state);
       }, backoff);
     });
+  }
+
+  // Inicia um clipe de evento a partir da puxada única, gravando o MPEG-TS que já é
+  // produzido para o vídeo ao vivo. Antes, cada evento spawnava um FFmpeg novo apontando
+  // para o main-stream da câmera — uma 2ª sessão RTSP a cada pessoa/veículo detectado, que
+  // em câmeras XM é justamente o que derruba o vídeo. Retorna false se não há puxada ativa
+  // (aí o chamador cai para o caminho RTSP tradicional).
+  startEventClip(cameraId: string, tsPath: string): boolean {
+    const st = this.streams.get(cameraId);
+    if (!st || st.isFile || st.eventClip) return false;
+    try {
+      st.eventClip = createWriteStream(tsPath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // Encerra o clipe e avisa quando o arquivo estiver fechado (pronto para remux).
+  stopEventClip(cameraId: string, onClosed?: () => void): void {
+    const st = this.streams.get(cameraId);
+    const ws = st?.eventClip;
+    if (!ws || !st) {
+      onClosed?.();
+      return;
+    }
+    st.eventClip = undefined;
+    ws.end(() => onClosed?.());
   }
 
   // Reproduz um ARQUIVO de gravação pelo mesmo pipeline (sem reconexão).
@@ -939,7 +1001,7 @@ const probe = spawn(FFMPEG_PATH, probeArgs, { stdio: ['ignore', 'ignore', 'pipe'
       preferredQuality: 'high',
       failoverActive: false,
       stallCount: 0,
-      probeAttempt: 0,
+      highAttempt: 0,
       lastDataAt: Date.now(),
       urlCandidates: [],
       urlAttempt: 0,
@@ -963,8 +1025,13 @@ const probe = spawn(FFMPEG_PATH, probeArgs, { stdio: ['ignore', 'ignore', 'pipe'
     if (stream.reconnectTimer) clearTimeout(stream.reconnectTimer);
     if (stream.watchdog) clearInterval(stream.watchdog);
     if (stream.failoverTimer) clearTimeout(stream.failoverTimer);
-    if (stream.probeTimer) clearTimeout(stream.probeTimer);
+    if (stream.highTimer) clearTimeout(stream.highTimer);
     this.detectionDetach?.(cameraId); // encerra a detecção alimentada por esta puxada
+    this.motionDetach?.(cameraId);
+    if (stream.eventClip) {
+      stream.eventClip.end();
+      stream.eventClip = undefined;
+    }
     this.streams.delete(cameraId);
     const camera = stream.camera;
     const name = camera?.name || cameraId;

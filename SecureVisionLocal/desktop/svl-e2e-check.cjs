@@ -40,7 +40,10 @@ function ok(cond, label) {
         ip: `192.0.2.${n}`,
         port: 554,
         protocol: 'rtsp',
-        streamUrl: `rtsp://192.0.2.${n}:554/test`,
+        // Path distinto por câmera: desde o bloqueio de cadastro duplicado, a identidade do
+        // aparelho é a URL SEM o host — duas câmeras com o mesmo path em IPs diferentes são
+        // tratadas como o mesmo dispositivo (é o caso real da câmera que troca de IP).
+        streamUrl: `rtsp://192.0.2.${n}:554/test${n}`,
         hasPTZ: false,
         hasAudio: false,
         recordContinuous: false,

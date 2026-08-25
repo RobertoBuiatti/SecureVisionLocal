@@ -55,6 +55,10 @@ function migrate(database: Database.Database): void {
 
     CREATE INDEX IF NOT EXISTS idx_recordings_camera ON recordings(cameraId);
     CREATE INDEX IF NOT EXISTS idx_recordings_start ON recordings(startTime);
+    -- indexSegments() consulta por filePath uma vez para CADA segmento em disco, a cada
+    -- 30s. Sem este índice cada consulta é um full scan: com uma semana de gravação são
+    -- ~1.000 arquivos × ~1.000 linhas varridas, tudo síncrono no processo principal.
+    CREATE INDEX IF NOT EXISTS idx_recordings_filepath ON recordings(filePath);
 
     CREATE TABLE IF NOT EXISTS events (
       id TEXT PRIMARY KEY,

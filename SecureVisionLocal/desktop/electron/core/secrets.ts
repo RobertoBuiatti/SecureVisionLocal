@@ -12,9 +12,24 @@ const DIGEST = 'sha512';
 export const PREFIX_V1 = 'enc:v1:';
 const PREFIX = 'enc:v2:';
 
+// Chaves derivadas em cache por salt. O PBKDF2 de 100k iterações custa ~50ms e é
+// SÍNCRONO: como `rowToCamera` decifra 3 campos por câmera e `listCameras()` é chamado
+// a cada 5s (UI), 15s (monitor), 20s (detecção) e 30s (gravação/retenção), isso bloqueava
+// o processo principal por segundos a cada minuto — e main bloqueado não drena o stdout
+// do FFmpeg nem envia pelo WebSocket, travando a imagem. O salt é fixo por registro, então
+// a partir da 2ª leitura o custo vai a zero. O formato em disco não muda.
+const keyCache = new Map<string, Buffer>();
+const APP_SECRET = 'SecureVisionLocal_Camera_2024!@#SecretKey';
+
 function deriveKey(salt: Buffer): Buffer {
-  const appSecret = 'SecureVisionLocal_Camera_2024!@#SecretKey';
-  return pbkdf2Sync(appSecret, salt, ITERATIONS, KEY_LEN, DIGEST);
+  const cacheKey = salt.toString('base64');
+  const cached = keyCache.get(cacheKey);
+  if (cached) return cached;
+  const key = pbkdf2Sync(APP_SECRET, salt, ITERATIONS, KEY_LEN, DIGEST);
+  // Teto de segurança: cada câmera usa 3 salts (senha + 2 URLs); 256 cobre ~85 câmeras.
+  if (keyCache.size >= 256) keyCache.clear();
+  keyCache.set(cacheKey, key);
+  return key;
 }
 
 export function isEncrypted(value: string | null | undefined): boolean {

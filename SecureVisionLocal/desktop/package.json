@@ -1,6 +1,6 @@
 {
   "name": "securevision-local-desktop",
-  "version": "0.1.50",
+  "version": "0.1.51",
   "description": "SecureVision Local - Software Windows para monitoramento de câmeras WiFi/IP (NVR por software)",
   "main": "dist-electron/main.js",
   "author": "SecureVision Local",
@@ -14,7 +14,11 @@
     "rebuild": "electron-rebuild -f -w better-sqlite3",
     "postinstall": "electron-builder install-app-deps",
     "lint": "eslint . --ext .ts,.tsx",
-    "test:e2e": "npm run build && node svl-e2e-check.cjs"
+    "test:e2e": "npm run build && node svl-e2e-check.cjs",
+    "check:stream": "node svl-check-single-source.cjs",
+    "check:boot": "npm run build && node svl-smoke-boot.cjs",
+    "check:fullscreen": "npm run build && node svl-check-fullscreen.cjs",
+    "check:packaged": "node svl-check-packaged.cjs"
   },
   "dependencies": {
     "@cycjimmy/jsmpeg-player": "^6.1.1",

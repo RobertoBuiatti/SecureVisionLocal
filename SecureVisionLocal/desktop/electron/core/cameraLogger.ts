@@ -101,6 +101,18 @@ export function listCameraLogs(cameraId?: string, limit = 100): CameraLogEntry[]
   }
 }
 
+// Remove logs mais antigos que `cutoff`. A tabela `camera_logs` não tinha NENHUMA poda:
+// com uma câmera instável são milhares de linhas por hora (cada uma com um parágrafo de
+// detalhes), inflando o banco e encarecendo todas as outras consultas.
+export function pruneCameraLogs(cutoff: number): number {
+  try {
+    const info = getDb().prepare('DELETE FROM camera_logs WHERE timestamp < ?').run(cutoff);
+    return Number(info.changes ?? 0);
+  } catch {
+    return 0;
+  }
+}
+
 export function clearCameraLogs(cameraId?: string): void {
   try {
     const db = getDb();

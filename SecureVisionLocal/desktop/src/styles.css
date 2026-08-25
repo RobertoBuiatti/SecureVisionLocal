@@ -254,6 +254,59 @@ html,
   gap: 12px;
 }
 
+/* Tela cheia REAL (fullscreen do monitor): na tela fica SÓ a imagem da câmera.
+   O elemento promovido é a `.live-view` inteira, então tudo que não é vídeo — cabeçalho
+   da view, barra de ferramentas do bloco, botão de remover — some aqui. A navegação vira
+   uma barra flutuante que só aparece com o mouse sobre a tela. */
+.live-view:fullscreen {
+  height: 100vh;
+  padding: 0;
+  background: #000;
+}
+.live-view:fullscreen .view-header,
+.live-view:fullscreen .tile-toolbar,
+.live-view:fullscreen .tile-remove {
+  display: none;
+}
+.live-view:fullscreen .fullscreen-view {
+  height: 100vh;
+  gap: 0;
+}
+.live-view:fullscreen .tile {
+  border: 0;
+  border-radius: 0;
+  background: #000;
+  height: 100%;
+}
+.live-view:fullscreen .tile-video {
+  border-radius: 0;
+}
+/* O canvas do jsmpeg preserva a proporção do vídeo; o fundo preto preenche o resto. */
+.live-view:fullscreen .player-canvas {
+  object-fit: contain;
+}
+.live-view:fullscreen .fs-nav {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 10;
+  background: rgba(0, 0, 0, 0.65);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 14px;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  pointer-events: none;
+}
+/* Some após uns segundos parado; volta ao mover o mouse (classe posta pelo LiveView).
+   Esc sai da tela cheia — comportamento do próprio sistema. */
+.live-view:fullscreen .fs-nav.visible,
+.live-view:fullscreen .fs-nav:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 /* Grid — preenche a área disponível sem estourar a viewport */
 .grid {
   display: grid;
@@ -323,6 +376,13 @@ html,
   width: 100%;
   height: 100%;
   display: block;
+  background: #000;
+}
+/* Sem imagem (conectando / sem sinal): esconde o canvas — que o jsmpeg deixa BRANCO até o
+   primeiro quadro — e deixa aparecer o preto do bloco. Sem isto, uma câmera desconectada
+   em tela cheia acende o monitor inteiro de branco. */
+.player-canvas.idle {
+  opacity: 0;
 }
 .player {
   position: relative;

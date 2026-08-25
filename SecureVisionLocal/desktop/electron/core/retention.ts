@@ -11,6 +11,7 @@ import {
   listRecordings,
 } from './recordingRepository';
 import { listCameras } from './cameraRepository';
+import { pruneCameraLogs } from './cameraLogger';
 import { listSnapshots, deleteOldestSnapshot, deleteSnapshotsByCamera, countSnapshotsByCamera } from './detectionSnapshotRepository';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -39,7 +40,19 @@ function deleteFull(rec: Recording): boolean {
 }
 
 // Soma o tamanho dos snapshots de detecção no disco.
+//
+// Faz `existsSync` + `statSync` em CADA snapshot (até `snapshotsMaxCount` por câmera), e
+// `getStorageUsage` é chamado pelo Dashboard a cada 5s. Como é I/O síncrono no processo
+// principal — o mesmo processo que precisa drenar o FFmpeg e alimentar o WebSocket de
+// vídeo — o resultado fica em cache: espaço em disco não muda a ponto de justificar
+// varrer o diretório inteiro doze vezes por minuto.
+const SNAPSHOT_SIZE_TTL_MS = 60_000;
+let snapshotSizeCache = { at: 0, bytes: 0 };
+
 function sumSnapshotSize(): number {
+  const now = Date.now();
+  if (now - snapshotSizeCache.at < SNAPSHOT_SIZE_TTL_MS) return snapshotSizeCache.bytes;
+
   const snaps = listSnapshots();
   let total = 0;
   for (const s of snaps) {
@@ -49,7 +62,13 @@ function sumSnapshotSize(): number {
       } catch { /* ignora arquivo removido entre a listagem e a leitura */ }
     }
   }
+  snapshotSizeCache = { at: now, bytes: total };
   return total;
+}
+
+// Invalida o cache quando a própria retenção apaga snapshots (o número muda na hora).
+function invalidateSnapshotSizeCache(): void {
+  snapshotSizeCache = { at: 0, bytes: 0 };
 }
 
 export function getStorageUsage(): StorageUsage {
@@ -94,7 +113,12 @@ export function enforceRetention(): number {
     }
   }
 
-  // 3) Limpeza de snapshots — respeita o limite por câmera.
+  // 3) Poda dos logs de câmera — mesma janela das gravações.
+  if (settings.retentionDays > 0) {
+    pruneCameraLogs(Date.now() - settings.retentionDays * DAY_MS);
+  }
+
+  // 4) Limpeza de snapshots — respeita o limite por câmera.
   for (const cam of listCameras()) {
     const count = countSnapshotsByCamera(cam.id);
     const max = settings.snapshotsMaxCount;
@@ -103,6 +127,7 @@ export function enforceRetention(): number {
         deleteOldestSnapshot(cam.id);
         removed += 1;
       }
+      invalidateSnapshotSizeCache();
     }
   }
 
@@ -119,6 +144,7 @@ export function purgeAll(): number {
     const before = countSnapshotsByCamera(cam.id);
     deleteSnapshotsByCamera(cam.id);
     removed += before;
+    invalidateSnapshotSizeCache();
   }
 
   // Apaga todas as gravações completadas (exceto as em andamento)

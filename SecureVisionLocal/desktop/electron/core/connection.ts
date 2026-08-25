@@ -58,25 +58,36 @@ export async function testConnection(
   const ok = results.find((r) => r.lat !== null);
 
   if (ok) {
-    insertCameraLog(
-      camera.id,
-      camera.name,
-      'info',
-      `Conexão TCP com "${camera.name}" OK — ${ok.lat}ms (${ok.host})`,
-      `Câmera: ${camera.name}\nHost que respondeu: ${ok.host}:${ok.port}\nIP no cadastro: ${camera.ip}:${camera.port}\nLatência: ${ok.lat}ms\nProtocolo: ${camera.protocol}\nUsuário: ${camera.username || '—'}\nURL: ${(camera.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}`,
-      'connection',
-    );
+    // Só registra o SUCESSO quando a câmera NÃO estava online — ou seja, quando é notícia.
+    // Antes isto gravava uma linha a cada 15s por câmera mesmo com tudo normal: 4.800 das
+    // 8.400 linhas do banco eram este único log, sem valor de diagnóstico e encarecendo
+    // todas as outras consultas.
+    if (camera.status !== 'online') {
+      insertCameraLog(
+        camera.id,
+        camera.name,
+        'info',
+        `Conexão TCP com "${camera.name}" OK — ${ok.lat}ms (${ok.host})`,
+        `Câmera: ${camera.name}\nHost que respondeu: ${ok.host}:${ok.port}\nIP no cadastro: ${camera.ip}:${camera.port}\nLatência: ${ok.lat}ms\nProtocolo: ${camera.protocol}\nUsuário: ${camera.username || '—'}\nURL: ${(camera.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}`,
+        'connection',
+      );
+    }
     return { success: true, latency: ok.lat, error: null, timestamp: Date.now(), host: ok.host };
   }
 
   const tested = targets.map((t) => `${t.host}:${t.port}`).join(', ');
-  insertCameraLog(
-    camera.id,
-    camera.name,
-    'error',
-    `Timeout ao conectar em "${camera.name}" — nenhum host respondeu em ${timeoutMs}ms`,
-    `Câmera: ${camera.name}\nHosts testados: ${tested}\nIP no cadastro: ${camera.ip}:${camera.port}\nProtocolo: ${camera.protocol}\nUsuário: ${camera.username || '—'}\nURL: ${(camera.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\nNenhum host candidato respondeu à conexão TCP no prazo. Verifique:\n1. Se a câmera está ligada\n2. Se o IP mudou (DHCP) — o app tenta reencontrar pelo MAC automaticamente\n3. Se a porta ${camera.port} é a porta de serviço correta\n4. Se não há firewall/bloqueio entre o PC e a câmera`,
-    'connection',
-  );
+  // Mesma regra do sucesso: a falha só vira log quando MUDA de estado. Com a câmera fora
+  // do ar isto gerava uma linha a cada 15s indefinidamente; a transição para offline já é
+  // registrada pelo connectionMonitor, com mais contexto.
+  if (camera.status !== 'offline') {
+    insertCameraLog(
+      camera.id,
+      camera.name,
+      'error',
+      `Timeout ao conectar em "${camera.name}" — nenhum host respondeu em ${timeoutMs}ms`,
+      `Câmera: ${camera.name}\nHosts testados: ${tested}\nIP no cadastro: ${camera.ip}:${camera.port}\nProtocolo: ${camera.protocol}\nUsuário: ${camera.username || '—'}\nURL: ${(camera.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\nNenhum host candidato respondeu à conexão TCP no prazo. Verifique:\n1. Se a câmera está ligada\n2. Se o IP mudou (DHCP) — o app tenta reencontrar pelo MAC automaticamente\n3. Se a porta ${camera.port} é a porta de serviço correta\n4. Se não há firewall/bloqueio entre o PC e a câmera`,
+      'connection',
+    );
+  }
   return { success: false, latency: null, error: 'Tempo esgotado', timestamp: Date.now() };
 }

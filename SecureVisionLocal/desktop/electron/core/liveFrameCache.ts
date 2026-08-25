@@ -6,7 +6,10 @@ import { getLiveFramesDir } from './paths';
 // Precisa ser generoso o bastante para cobrir o intervalo entre quadros do pipeline
 // de detecção (1 fps → ~1s) mais folga; a captura de preset espera 1500ms após mover
 // a câmera, então um limite de ~3s garante que o quadro reflita a posição nova.
-const DEFAULT_MAX_AGE_MS = 3000;
+// 10s (era 3s): sob carga o "-vf fps=1" do FFmpeg atrasa a escrita do JPEG e a janela
+// apertada fazia o snapshot concluir que não havia quadro fresco e cair para o FFmpeg
+// direto no RTSP — até 6 conexões novas por captura, a cada 5s, contra a câmera.
+const DEFAULT_MAX_AGE_MS = 10000;
 
 // Caminho do último quadro ao vivo (JPEG) de uma câmera. Gravado pelo pipeline de
 // detecção de movimento (2ª saída do FFmpeg) e lido pelos snapshots/preset.
