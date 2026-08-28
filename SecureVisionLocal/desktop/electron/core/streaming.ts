@@ -32,6 +32,15 @@ const WS_PORT_MAX = 9400;
 // Timeouts de stall (travamento) por qualidade. High mais tolerante p/ evitar failover prematuro.
 const STALL_TIMEOUT_MS = { high: 30000, low: 45000 };
 const WATCHDOG_INTERVAL_MS = 3000; // frequência de checagem do travamento
+// Reciclagem da sessão RTSP por IDADE. O watchdog de stall acima só pega FFmpeg MUDO
+// (lastDataAt só avança em stdout 'data'); câmera que degrada ainda enviando bytes passa
+// batido. Contado por RELÓGIO DE PAREDE, não a partir do último spawn: os logs de produção
+// mostram respawn a cada 10-40min, o que zeraria um contador ancorado no spawn para sempre.
+// Mesmo princípio do RENDERER_RECYCLE_MS (main.ts).
+const MAX_SESSION_MS = Number(process.env.SVL_STREAM_RECYCLE_MS) || 3 * 60 * 60 * 1000;
+// Espalha os reloads: sem isto, N câmeras iniciadas juntas reciclam no mesmo segundo --
+// rajada de RTSP simultânea contra o roteador e buraco de gravação global.
+const RECYCLE_JITTER_MS = 10 * 60 * 1000;
 const MAX_STALLS_BEFORE_FAILOVER = 3; // quantos stalls consecutivos em high antes de cair p/ low
 // Restauração automática do HD (sub-stream → main-stream).
 //
@@ -51,6 +60,10 @@ const MAX_HIGH_ATTEMPTS = 6; // após isso, FICA no sub (o HD volta a ser tentad
 // Limite de bytes enfileirados por cliente WebSocket antes de descartar quadro. Sem isto,
 // um renderer lento faz o `ws` acumular vídeo na memória do processo principal sem teto.
 const WS_MAX_BUFFERED_BYTES = 4_000_000;
+
+function nextRecycleTime(): number {
+  return Date.now() + MAX_SESSION_MS + Math.random() * RECYCLE_JITTER_MS;
+}
 
 // Caminhos RTSP alternativos para câmeras cujo ONVIF retorna URL genérica (apenas "/").
 // Muitas marcas (Xiongmai, Hikvision, Intelbras/Dahua, TP-Link, Reolink, Foscam,
@@ -166,6 +179,7 @@ interface ActiveStream {
   failoverTimer?: ReturnType<typeof setTimeout>; // timer para tentar voltar à qualidade preferida
   failoverActive: boolean; // true se fez failover high→low e está aguardando voltar
   lastDataAt: number; // instante do último quadro recebido (para o watchdog de travamento)
+  nextRecycleAt: number; // quando reciclar a sessão (ver MAX_SESSION_MS)
   watchdog?: ReturnType<typeof setInterval>;
   urlCandidates: string[]; // URLs a tentar (fallback paths)
   urlAttempt: number; // índice atual em urlCandidates
@@ -290,6 +304,7 @@ export class StreamingService {
       stallCount: 0,
       highAttempt: 0,
       lastDataAt: Date.now(),
+      nextRecycleAt: nextRecycleTime(),
       urlCandidates: this.buildUrlCandidates(camera, quality),
       urlAttempt: 0,
       preferredQuality: quality,
@@ -416,6 +431,17 @@ export class StreamingService {
   // Reinicia o FFmpeg da puxada única para aplicar mudança de saídas (gravação/detecção).
   private reconfigure(state: ActiveStream): void {
     if (state.stopping) return;
+    // O renderer PRECISA ser avisado. O jsmpeg não sobrevive a um stream MPEG-TS novo no
+    // meio do fluxo, e aqui o 'close' do FFmpeg é suprimido (removeAllListeners abaixo),
+    // então o aviso de queda nunca sairia e a imagem ficaria congelada até trocar de tela.
+    // O Player recria o decoder ao ver error -> running. Ver Player.tsx (mountJsmpeg).
+    if (!state.isFile) {
+      this.notifier?.({
+        cameraId: state.cameraId,
+        status: 'error',
+        error: 'Reiniciando vídeo…',
+      });
+    }
     this.detectionDetach?.(state.cameraId); // será reanexada no novo spawn, se ainda ligada
     this.motionDetach?.(state.cameraId);
     if (state.reconnectTimer) {
@@ -447,23 +473,9 @@ export class StreamingService {
     state.urlCandidates = this.buildUrlCandidates(camera, state.quality);
     state.urlAttempt = 0;
     state.reconnectCount = 0;
-    if (state.reconnectTimer) {
-      clearTimeout(state.reconnectTimer);
-      state.reconnectTimer = undefined;
-    }
-    const old = state.ffmpeg;
-    state.ffmpeg = null;
-    if (old) {
-      old.removeAllListeners('close');
-      old.removeAllListeners('error');
-      try {
-        old.kill('SIGKILL');
-      } catch {
-        /* noop */
-      }
-    }
-    state.gotData = false;
-    this.spawnCameraFfmpeg(state);
+    // Delega o kill/respawn: era código idêntico duplicado, e por reconfigure o renderer
+    // ainda recebe o aviso para recriar o decoder.
+    this.reconfigure(state);
   }
 
   private startWatchdog(state: ActiveStream): void {
@@ -492,6 +504,17 @@ export class StreamingService {
           error: 'Vídeo travou. Reiniciando…',
         });
         this.restartStalled(state);
+        return; // acabou de respawnar: não recicla no mesmo tique
+      }
+      // Reciclagem por idade -- ver MAX_SESSION_MS. Adiada enquanto um clipe de evento
+      // está sendo escrito: o restart cortaria o MPEG-TS no meio (tenta de novo em 3s).
+      if (!state.isFile && !state.eventClip && Date.now() >= state.nextRecycleAt) {
+        state.nextRecycleAt = nextRecycleTime();
+        console.log(
+          `[streaming] reload programado de "${state.camera?.name || state.cameraId}" ` +
+            `(sessão com mais de ${Math.round(MAX_SESSION_MS / 60000)}min)`,
+        );
+        this.reconfigure(state); // avisa o renderer e respawna o FFmpeg
       }
     }, WATCHDOG_INTERVAL_MS);
   }
@@ -1003,6 +1026,7 @@ export class StreamingService {
       stallCount: 0,
       highAttempt: 0,
       lastDataAt: Date.now(),
+      nextRecycleAt: Infinity, // reprodução de arquivo nunca recicla (isFile)
       urlCandidates: [],
       urlAttempt: 0,
       reconnectCount: 0,

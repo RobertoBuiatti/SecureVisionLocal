@@ -33,6 +33,7 @@ import type {
 export const IPC = {
   cameraLogsGet: 'camera-logs:get',
   cameraLogsClear: 'camera-logs:clear',
+  logsOpenFolder: 'logs:open-folder',
   camerasList: 'cameras:list',
   camerasAdd: 'cameras:add',
   camerasUpdate: 'cameras:update',
@@ -184,6 +185,7 @@ export interface SvlApi {
   cameraLogs: {
     get: (cameraId?: string, limit?: number) => Promise<CameraLogEntry[]>;
     clear: (cameraId?: string) => Promise<void>;
+    openFolder: () => Promise<void>;
   };
   events: {
     onCameraStatus: (cb: (p: { cameraId: string; status: string }) => void) => () => void;

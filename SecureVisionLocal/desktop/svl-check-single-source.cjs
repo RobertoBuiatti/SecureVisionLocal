@@ -155,6 +155,52 @@ function checkNoParallelRtsp() {
   console.log('  nenhuma sessao RTSP paralela no codigo');
 }
 
+
+// ---------------------------------------------------------------------------
+// 4) Guarda de regressao: a imagem tem de se recuperar sozinha.
+//    O backend preserva o WebSocket entre respawns do FFmpeg, entao o jsmpeg NAO cai
+//    junto -- ele recebe um MPEG-TS novo no meio do fluxo e congela o ultimo quadro.
+//    Duas invariantes seguram isso: o backend avisa em todo restart, e o Player recria
+//    o decoder ao ser avisado. Se qualquer uma sumir, a imagem volta a travar.
+// ---------------------------------------------------------------------------
+function checkVideoRecovery() {
+  const offenders = [];
+
+  const streaming = readFileSync(join(__dirname, 'electron/core/streaming.ts'), 'utf-8');
+  const start = streaming.indexOf('private reconfigure(');
+  const body = start === -1 ? '' : streaming.slice(start, streaming.indexOf('spawnCameraFfmpeg(state);', start));
+  if (start === -1) {
+    offenders.push('streaming.ts: reconfigure() sumiu');
+  } else if (!body.includes('this.notifier')) {
+    offenders.push('streaming.ts: reconfigure() nao avisa mais o renderer -- o close do '
+      + 'FFmpeg e suprimido ali, entao nada mais avisaria e a imagem travaria');
+  } else if (body.indexOf('this.notifier') > body.indexOf("kill('SIGKILL')")) {
+    offenders.push('streaming.ts: reconfigure() avisa o renderer DEPOIS de matar o FFmpeg');
+  }
+
+  const player = readFileSync(join(__dirname, 'src/components/Player.tsx'), 'utf-8');
+  const mStart = player.indexOf('function mountJsmpeg');
+  const mEnd = player.indexOf('new JSMpeg.Player', mStart);
+  if (mStart === -1 || mEnd === -1) {
+    offenders.push('Player.tsx: mountJsmpeg() sumiu -- o decoder voltou a ser criado uma vez so');
+  } else if (!player.slice(mStart, mEnd).includes('destroy()')) {
+    offenders.push('Player.tsx: mountJsmpeg() nao destroi o decoder anterior antes de recriar');
+  }
+  // O bloco que trata o 'running' precisa recriar o decoder: e o unico ponto em que o
+  // Player fica sabendo que o stream voltou depois de uma queda.
+  const rStart = player.indexOf("status === 'running'");
+  const rEnd = player.indexOf("status === 'error'", rStart);
+  const runningBlock = rStart === -1 || rEnd === -1 ? '' : player.slice(rStart, rEnd);
+  if (!runningBlock.includes('mountJsmpeg()')) {
+    offenders.push('Player.tsx: o decoder nao e mais recriado quando o stream volta -- '
+      + 'a imagem vai congelar ate trocar de tela');
+  }
+
+  assert.strictEqual(offenders.length, 0,
+    'recuperacao da imagem quebrada: ' + offenders.join(' | '));
+  console.log('  backend avisa em todo restart e o Player recria o decoder');
+}
+
 (async () => {
   console.log('1) puxada unica -> 5 saidas simultaneas');
   await checkSingleSourceOutputs();
@@ -162,6 +208,8 @@ function checkNoParallelRtsp() {
   await checkEventClip();
   console.log('3) guarda contra sessoes RTSP paralelas');
   checkNoParallelRtsp();
+  console.log('4) guarda contra imagem travada apos reconexao');
+  checkVideoRecovery();
   console.log('\nOK: conexao unica preservada em todos os caminhos');
 })().catch((e) => {
   console.error('\nFALHOU:', e.message);

@@ -6,6 +6,8 @@ declare module '@cycjimmy/jsmpeg-player' {
     autoplay?: boolean;
     loop?: boolean;
     pauseWhenHidden?: boolean;
+    // Chamado a cada quadro decodificado — usado pelo watchdog de quadros do Player.
+    onVideoDecode?: (decoder: unknown, elapsedTime: number) => void;
     [key: string]: unknown;
   }
 

@@ -1,4 +1,4 @@
-import { ipcMain, dialog, type BrowserWindow } from 'electron';
+import { ipcMain, dialog, shell, app, type BrowserWindow } from 'electron';
 import { IPC } from '../../src/shared/ipc';
 import type {
   Camera,
@@ -46,7 +46,7 @@ import { captureJpeg, presetsSnapshotDir } from '../core/snapshotService';
 import { computeAndSaveReferenceEmbedding } from '../core/ai/aiVerifier';
 import type { PTZTourStep } from '../../src/shared/types';
 import { join } from 'node:path';
-import { readFile, copyFile } from 'node:fs/promises';
+import { readFile, copyFile, mkdir } from 'node:fs/promises';
 import { listSchedules, upsertSchedule, deleteSchedule } from '../core/scheduleRepository';
 import { testConnection } from '../core/connection';
 import { getSettings, updateSettings } from '../core/settings';
@@ -418,6 +418,14 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   );
   ipcMain.handle(IPC.cameraLogsClear, (_e, cameraId?: string) => {
     clearCameraLogs(cameraId);
+  });
+  // Abre a pasta do log em texto do processo principal (main.log). Não é o mesmo que os
+  // "Logs de Câmera" acima, que ficam no SQLite -- este é o arquivo com crashes e stack
+  // traces, o que se pede quando o app roda em outra máquina.
+  ipcMain.handle(IPC.logsOpenFolder, async () => {
+    const dir = join(app.getPath('userData'), 'logs');
+    await mkdir(dir, { recursive: true }); // pode não existir se nada foi logado ainda
+    await shell.openPath(dir);
   });
 
   // ---- Detecção ----

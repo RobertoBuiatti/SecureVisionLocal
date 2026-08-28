@@ -99,6 +99,7 @@ const api: SvlApi = {
       ipcRenderer.invoke(IPC.cameraLogsGet, cameraId, limit) as Promise<CameraLogEntry[]>,
     clear: (cameraId?: string) =>
       ipcRenderer.invoke(IPC.cameraLogsClear, cameraId) as Promise<void>,
+    openFolder: () => ipcRenderer.invoke(IPC.logsOpenFolder) as Promise<void>,
   },
   events: {
     onCameraStatus: (cb) => {

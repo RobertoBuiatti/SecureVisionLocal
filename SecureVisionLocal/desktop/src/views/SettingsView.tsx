@@ -307,6 +307,14 @@ export function SettingsView() {
             </button>
             <button
               className="btn"
+              onClick={() => window.svl.cameraLogs.openFolder()}
+              style={{ fontSize: 12 }}
+              title="Abre a pasta com main.log (log técnico do aplicativo, com falhas e travamentos)"
+            >
+              Abrir pasta de logs
+            </button>
+            <button
+              className="btn"
               onClick={clearLogs}
               style={{ fontSize: 12, color: 'var(--danger)' }}
             >

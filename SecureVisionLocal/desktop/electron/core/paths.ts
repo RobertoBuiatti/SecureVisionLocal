@@ -2,7 +2,9 @@ import { app } from 'electron';
 import { join } from 'node:path';
 import { mkdirSync, existsSync } from 'node:fs';
 
-// Caminhos padrão do software no Windows (sob %APPDATA%/SecureVision Local).
+// Caminhos padrão do software no Windows (sob %APPDATA%/securevision-local-desktop).
+// O nome vem do "name" do package.json, NÃO do productName do electron-builder: sem
+// productName no package.json, app.getName() cai no name e é ele quem define userData.
 function ensureDir(dir: string): string {
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
