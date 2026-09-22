@@ -1,7 +1,9 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { createWriteStream, type WriteStream } from 'node:fs';
+import { createWriteStream, readFileSync, type WriteStream } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
+import { getDb } from './db';
 import { FFMPEG_PATH } from './ffmpegPath';
 import { hwaccelArgs } from './hwaccel';
 import { isSafeStreamUrl } from './urlGuard';
@@ -32,6 +34,13 @@ const WS_PORT_MAX = 9400;
 // Timeouts de stall (travamento) por qualidade. High mais tolerante p/ evitar failover prematuro.
 const STALL_TIMEOUT_MS = { high: 30000, low: 45000 };
 const WATCHDOG_INTERVAL_MS = 3000; // frequência de checagem do travamento
+// Prazo para o PRIMEIRO quadro de uma sessão. Separado do STALL_TIMEOUT_MS de propósito:
+// 30s/45s existem para tolerar hiccup de WiFi num stream JÁ funcionando (ver HANGOFF.md),
+// mas quem nunca entregou quadro não tem imagem a preservar -- e cobrar 30s dele é o que
+// faz "recarregar a câmera" demorar. Pior: nesse caso o respawn saía pelo restartStalled,
+// com os MESMOS argumentos, então uma sessão que abre o RTSP e decodifica no vazio
+// (HEVC via dxva2) repetia o mesmo erro a cada 30s para sempre.
+const FIRST_FRAME_TIMEOUT_MS = 8000;
 // Reciclagem da sessão RTSP por IDADE. O watchdog de stall acima só pega FFmpeg MUDO
 // (lastDataAt só avança em stdout 'data'); câmera que degrada ainda enviando bytes passa
 // batido. Contado por RELÓGIO DE PAREDE, não a partir do último spawn: os logs de produção
@@ -42,6 +51,16 @@ const MAX_SESSION_MS = Number(process.env.SVL_STREAM_RECYCLE_MS) || 3 * 60 * 60 
 // rajada de RTSP simultânea contra o roteador e buraco de gravação global.
 const RECYCLE_JITTER_MS = 10 * 60 * 1000;
 const MAX_STALLS_BEFORE_FAILOVER = 3; // quantos stalls consecutivos em high antes de cair p/ low
+// Imagem CONGELADA com o FFmpeg entregando bytes normalmente: a câmera trava e passa a
+// repetir o mesmo quadro (comum em XM). O watchdog de stall não enxerga isso -- ele conta
+// bytes, não conteúdo -- e até aqui o único remédio era a reciclagem de 3h (MAX_SESSION_MS).
+// A janela é LONGA de propósito: uma cena genuinamente parada (madrugada, sala vazia) produz
+// JPEG byte a byte idêntico do mesmo jeito, e não há como distingui-la pelos pixels. O preço
+// de errar é um reload de ~2s, então 10min é o ponto em que reiniciar sai mais barato que
+// continuar exibindo (e GRAVANDO) uma imagem possivelmente parada.
+// ponytail: janela única para todas as câmeras; se alguma vigiar cena imóvel de verdade,
+// virar ajuste POR CÂMERA (coluna em `cameras`) em vez de env var global.
+const FROZEN_TIMEOUT_MS = Number(process.env.SVL_FROZEN_TIMEOUT_MS) || 10 * 60 * 1000;
 // Restauração automática do HD (sub-stream → main-stream).
 //
 // ANTES isto era um "probe": um 2º FFmpeg espião abria uma sessão RTSP 8MP PARALELA na
@@ -60,6 +79,36 @@ const MAX_HIGH_ATTEMPTS = 6; // após isso, FICA no sub (o HD volta a ser tentad
 // Limite de bytes enfileirados por cliente WebSocket antes de descartar quadro. Sem isto,
 // um renderer lento faz o `ws` acumular vídeo na memória do processo principal sem teto.
 const WS_MAX_BUFFERED_BYTES = 4_000_000;
+
+// Câmeras em que a aceleração de hardware abre o RTSP mas não produz quadro (HEVC via
+// dxva2). Lembrado no banco: sem isso, cada início a frio paga de novo a tentativa cega
+// que só falha no FIRST_FRAME_TIMEOUT_MS -- o pedaço mais caro do reload nessas câmeras.
+const HW_FAILED_KEY = 'hwFailedCameras';
+
+function hwFailedCameras(): Set<string> {
+  try {
+    const row = getDb().prepare('SELECT value FROM settings WHERE key = ?').get(HW_FAILED_KEY) as
+      | { value: string }
+      | undefined;
+    return new Set<string>(row ? (JSON.parse(row.value) as string[]) : []);
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function rememberHwFailed(cameraId: string): void {
+  try {
+    const ids = hwFailedCameras();
+    ids.add(cameraId);
+    getDb()
+      .prepare(
+        'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+      )
+      .run(HW_FAILED_KEY, JSON.stringify([...ids]));
+  } catch {
+    /* noop -- no pior caso volta a tentar o HW no próximo início */
+  }
+}
 
 function nextRecycleTime(): number {
   return Date.now() + MAX_SESSION_MS + Math.random() * RECYCLE_JITTER_MS;
@@ -190,6 +239,11 @@ interface ActiveStream {
   stallCount: number; // stalls consecutivos na qualidade atual (reset ao trocar qualidade)
   reconnectCount: number; // tentativas de reconexão consecutivas (para backoff)
   hwFailed?: boolean; // aceleração de HW abriu o RTSP mas não produziu quadro → usar software (comum em HEVC/dxva2)
+  // Imagem congelada (ver FROZEN_TIMEOUT_MS). A assinatura é do quadro ao vivo (JPEG) que a
+  // própria puxada já escreve 1x/s -- nada é pedido à câmera para descobrir isso.
+  frozenSig?: string; // assinatura do último quadro DIFERENTE
+  frozenSince?: number; // desde quando o quadro não muda
+  frozenMiss?: number; // assinaturas diferentes seguidas (tolera leitura parcial do JPEG)
   // Restauração automática do HD (na própria puxada, sem 2ª sessão)
   highTimer?: ReturnType<typeof setTimeout>;
   highAttempt: number; // tentativas de promoção ao HD (para backoff exponencial)
@@ -313,6 +367,7 @@ export class StreamingService {
       viewerActive: false,
       record: false,
       detect: false,
+      hwFailed: hwFailedCameras().has(camera.id),
     };
     this.streams.set(camera.id, state);
     this.startWatchdog(state);
@@ -485,8 +540,21 @@ export class StreamingService {
       // Lido a cada tique (e não capturado na criação): depois de um failover high→low
       // o watchdog precisa passar a usar o timeout mais tolerante do sub-stream, senão
       // continua cobrando 30s de um stream que tem direito a 45s e reinicia à toa.
-      const timeout = STALL_TIMEOUT_MS[state.quality];
+      const timeout = state.gotData ? STALL_TIMEOUT_MS[state.quality] : FIRST_FRAME_TIMEOUT_MS;
       if (Date.now() - state.lastDataAt > timeout) {
+        // Sessão que não produziu o primeiro quadro: mata e deixa o handler de 'close'
+        // escolher o próximo passo (software em vez de HW, próxima URL, failover para o
+        // sub-stream). Ver FIRST_FRAME_TIMEOUT_MS: por aqui NÃO pode passar pelo
+        // restartStalled, que respawnaria com os mesmos argumentos.
+        if (!state.gotData) {
+          state.lastDataAt = Date.now(); // não redispara no tique seguinte, antes do 'close'
+          try {
+            state.ffmpeg?.kill('SIGKILL');
+          } catch {
+            /* noop */
+          }
+          return;
+        }
         const camera = state.camera;
         const name = camera?.name || state.cameraId;
         const secs = Math.round(timeout / 1000);
@@ -506,6 +574,30 @@ export class StreamingService {
         this.restartStalled(state);
         return; // acabou de respawnar: não recicla no mesmo tique
       }
+      // Imagem parada com o FFmpeg entregando bytes -- ver FROZEN_TIMEOUT_MS.
+      if (!state.isFile && !state.eventClip && state.gotData && this.pictureFrozen(state)) {
+        const name = state.camera?.name || state.cameraId;
+        insertCameraLog(
+          state.cameraId,
+          name,
+          'warn',
+          `Imagem de "${name}" parada há mais de ${Math.round(FROZEN_TIMEOUT_MS / 60000)}min — reiniciando`,
+          `Câmera: ${name}
+IP: ${state.camera?.ip || '—'}:${state.camera?.port || '—'}
+
+O FFmpeg continua entregando bytes, mas o quadro ao vivo não muda um único byte há ${Math.round(FROZEN_TIMEOUT_MS / 60000)}min: a câmera travou e está repetindo a mesma imagem. O watchdog de travamento não pega este caso porque ele conta bytes, não conteúdo — e a gravação 24/7 estaria guardando a imagem parada. A puxada será reaberta.
+
+Se esta câmera vigia uma cena genuinamente imóvel, aumente SVL_FROZEN_TIMEOUT_MS.`,
+          'streaming',
+        );
+        this.notifier?.({
+          cameraId: state.cameraId,
+          status: 'error',
+          error: 'Imagem parada. Reiniciando…',
+        });
+        this.reconfigure(state);
+        return;
+      }
       // Reciclagem por idade -- ver MAX_SESSION_MS. Adiada enquanto um clipe de evento
       // está sendo escrito: o restart cortaria o MPEG-TS no meio (tenta de novo em 3s).
       if (!state.isFile && !state.eventClip && Date.now() >= state.nextRecycleAt) {
@@ -517,6 +609,41 @@ export class StreamingService {
         this.reconfigure(state); // avisa o renderer e respawna o FFmpeg
       }
     }, WATCHDOG_INTERVAL_MS);
+  }
+
+  // A imagem está parada? Compara a assinatura do quadro ao vivo (JPEG da saída 2 da
+  // própria puxada, reescrito 1x/s) entre os tiques do watchdog. Sem quadro FRESCO não há
+  // resposta -- aí quem manda é o watchdog de stall, que já cobre o FFmpeg mudo.
+  private pictureFrozen(state: ActiveStream): boolean {
+    const path = freshLiveFrame(state.cameraId);
+    if (!path) return false;
+    let sig: string;
+    try {
+      sig = createHash('sha1').update(readFileSync(path)).digest('hex');
+    } catch {
+      return false; // arquivo sendo reescrito neste instante: tenta no próximo tique
+    }
+    if (sig !== state.frozenSig) {
+      // Uma divergência isolada pode ser leitura PARCIAL do JPEG (o FFmpeg reescreve o
+      // mesmo arquivo 1x/s). Só a segunda seguida conta como imagem nova -- senão uma
+      // leitura torta zeraria o relógio e o congelamento nunca seria detectado.
+      state.frozenMiss = (state.frozenMiss ?? 0) + 1;
+      if (state.frozenMiss >= 2) {
+        state.frozenSig = sig;
+        state.frozenSince = Date.now();
+        state.frozenMiss = 0;
+      }
+      return false;
+    }
+    state.frozenMiss = 0;
+    if (state.frozenSince === undefined) {
+      state.frozenSince = Date.now();
+      return false;
+    }
+    if (Date.now() - state.frozenSince < FROZEN_TIMEOUT_MS) return false;
+    state.frozenSig = undefined; // recomeça a contagem depois do reinício
+    state.frozenSince = undefined;
+    return true;
   }
 
   // Agenda a próxima tentativa de voltar ao main-stream (HD) enquanto a puxada está no
@@ -672,10 +799,14 @@ export class StreamingService {
       // fazia qualquer reordenação virar "corrupção" e disparar stall/reconexão em WiFi).
       '-fflags', isLow ? 'nobuffer+igndts+discardcorrupt' : 'nobuffer+discardcorrupt',
       '-flags', 'low_delay',
-      '-analyzeduration', isLow ? '1000000' : '5000000',
-      '-probesize', isLow ? '500000' : '5000000',
-      '-max_delay', isLow ? '1000000' : '5000000',
-      '-reorder_queue_size', isLow ? '256' : '1000',
+      // Tetos de análise/latência do main-stream cortados (eram 5s/5MB/5s/1000): é o
+      // tempo que o FFmpeg pode gastar ANTES do primeiro quadro a cada reabertura. O SDP
+      // do RTSP já declara as trilhas, então o probe longo só encarece o reload; 2s/1,5MB
+      // ainda acham vídeo + áudio (verificado em svl-check-single-source.cjs).
+      '-analyzeduration', isLow ? '1000000' : '2000000',
+      '-probesize', isLow ? '500000' : '1500000',
+      '-max_delay', isLow ? '1000000' : '2500000',
+      '-reorder_queue_size', isLow ? '256' : '512',
       '-i', url,
     ];
 
@@ -867,6 +998,7 @@ export class StreamingService {
         // mesma URL — costuma resolver de imediato. Fica sticky nesta puxada (até reiniciar).
         if (!state.hwFailed && hwaccelArgs().length > 0) {
           state.hwFailed = true;
+          rememberHwFailed(state.cameraId); // não repetir a tentativa cega no próximo início
           insertCameraLog(
             state.cameraId,
             name,
