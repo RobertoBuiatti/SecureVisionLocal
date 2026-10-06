@@ -13,6 +13,7 @@ const api: SvlApi = {
     test: (id) => ipcRenderer.invoke(IPC.camerasTest, id),
     videoOptions: (id) => ipcRenderer.invoke(IPC.camerasVideoOptions, id),
     setResolution: (id, resolution) => ipcRenderer.invoke(IPC.camerasSetResolution, id, resolution),
+    verifyStreams: (data) => ipcRenderer.invoke(IPC.camerasVerifyStreams, data),
   },
   discovery: {
     scan: (opts) => ipcRenderer.invoke(IPC.discoveryScan, opts),

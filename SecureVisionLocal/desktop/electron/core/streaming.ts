@@ -50,7 +50,11 @@ const MAX_SESSION_MS = Number(process.env.SVL_STREAM_RECYCLE_MS) || 3 * 60 * 60 
 // Espalha os reloads: sem isto, N câmeras iniciadas juntas reciclam no mesmo segundo --
 // rajada de RTSP simultânea contra o roteador e buraco de gravação global.
 const RECYCLE_JITTER_MS = 10 * 60 * 1000;
-const MAX_STALLS_BEFORE_FAILOVER = 3; // quantos stalls consecutivos em high antes de cair p/ low
+// Falhas consecutivas em high (stall OU queda) antes de cair p/ low. 1 = na primeira falha a
+// tela já mostra o sub-stream, que é o que tem imagem; o HD volta a ser tentado depois
+// (scheduleHighRetry). Antes eram 3 stalls, e queda não contava — em Wi-Fi o HD caía e
+// reconectava em loop sem nunca ceder a vez ao sub.
+const MAX_STALLS_BEFORE_FAILOVER = 1;
 // Imagem CONGELADA com o FFmpeg entregando bytes normalmente: a câmera trava e passa a
 // repetir o mesmo quadro (comum em XM). O watchdog de stall não enxerga isso -- ele conta
 // bytes, não conteúdo -- e até aqui o único remédio era a reciclagem de 3h (MAX_SESSION_MS).
@@ -114,12 +118,23 @@ function nextRecycleTime(): number {
   return Date.now() + MAX_SESSION_MS + Math.random() * RECYCLE_JITTER_MS;
 }
 
+// URL do sub-stream: a cadastrada ou, em Xiongmai e clones (…channel=1&stream=0.sdp?real_stream,
+// /avstream/channel=1/stream=0), a própria URL do main com stream=1. Sem ela o failover
+// high→low nunca dispara e a câmera fica presa no main 8MP.
+export function subStreamUrlFor(
+  camera: Pick<Camera, 'streamUrl' | 'subStreamUrl'>,
+): string | undefined {
+  if (camera.subStreamUrl) return camera.subStreamUrl;
+  const url = camera.streamUrl || '';
+  return /stream=0\b/i.test(url) ? url.replace(/stream=0\b/i, 'stream=1') : undefined;
+}
+
 // Caminhos RTSP alternativos para câmeras cujo ONVIF retorna URL genérica (apenas "/").
 // Muitas marcas (Xiongmai, Hikvision, Intelbras/Dahua, TP-Link, Reolink, Foscam,
 // Axis, Samsung/Hanwha, UNV, Vivotek, Bosch, etc.) usam paths específicos que o
 // ONVIF nem sempre retorna. Esta lista cobre ~95% do mercado.
 // Ordenada aproximada por probabilidade de acerto.
-const RTSP_FALLBACK_PATHS = [
+export const RTSP_FALLBACK_PATHS = [
   // === Xiongmai (genérico ONVIF) ===
   '/onvif1',
 
@@ -265,6 +280,7 @@ export type StreamStatusEvent = {
   cameraId: string;
   status: 'running' | 'error';
   error?: string;
+  quality?: 'low' | 'high'; // qualidade da puxada que está entregando quadros (em 'running')
 };
 type Notifier = (e: StreamStatusEvent) => void;
 
@@ -391,6 +407,7 @@ export class StreamingService {
       cameraId: camera.id,
       wsPort: state.wsPort,
       status: state.gotData ? 'running' : 'starting',
+      quality: state.quality,
     };
   }
 
@@ -735,8 +752,7 @@ Se esta câmera vigia uma cena genuinamente imóvel, aumente SVL_FROZEN_TIMEOUT_
 
     // Gera lista de URLs RTSP a tentar (original + fallbacks se o path for genérico).
   private buildUrlCandidates(camera: Camera, quality: 'low' | 'high'): string[] {
-    const rawUrl =
-      quality === 'low' && camera.subStreamUrl ? camera.subStreamUrl : camera.streamUrl;
+    const rawUrl = (quality === 'low' && subStreamUrlFor(camera)) || camera.streamUrl;
     const baseUrl = injectCredentials(rawUrl, camera.username, camera.password);
     if (!baseUrl || !isSafeStreamUrl(baseUrl)) return [baseUrl || ''];
     const candidates = [baseUrl];
@@ -939,7 +955,7 @@ Se esta câmera vigia uma cena genuinamente imóvel, aumente SVL_FROZEN_TIMEOUT_
           `Câmera: ${name}\nIP: ${camera?.ip || '—'}:${camera?.port || '—'}\nUsuário: ${camera?.username || '—'}\nURL: ${(camera?.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nQualidade: ${state.quality}\nPorta WS: ${state.wsPort}\n\nO FFmpeg começou a produzir quadros. O stream de vídeo está sendo transmitido para a interface.`,
           'streaming',
         );
-        this.notifier?.({ cameraId: state.cameraId, status: 'running' });
+        this.notifier?.({ cameraId: state.cameraId, status: 'running', quality: state.quality });
       }
       // Clipe de evento: escreve o MESMO MPEG-TS que vai para a tela. Não custa nada à
       // câmera — os bytes já existem.
@@ -964,7 +980,9 @@ Se esta câmera vigia uma cena genuinamente imóvel, aumente SVL_FROZEN_TIMEOUT_
       // mas com `force` (quando o high NUNCA conectou) cai na hora — um main-stream
       // 8MP às vezes nem abre em WiFi, e ficar tentando só ele deixaria a tela preta.
       const attemptFailoverToLow = (force = false) => {
-        if (!camera?.subStreamUrl) return false;
+        if (!camera) return false;
+        const subUrl = subStreamUrlFor(camera);
+        if (!subUrl) return false;
         if (state.quality === 'low') return false; // já está em low
         if (state.failoverActive) return false; // já tentou failover
         const stalls = state.stallCount || 0;
@@ -982,7 +1000,7 @@ Se esta câmera vigia uma cena genuinamente imóvel, aumente SVL_FROZEN_TIMEOUT_
           name,
           'warn',
           `Failover automático: "${name}" caindo para qualidade baixa (sub-stream)`,
-          `Câmera: ${name}\nIP: ${camera.ip}:${camera.port}\nQualidade preferida: ${state.preferredQuality}\nNova qualidade: ${nextQuality}\nStalls consecutivos: ${stalls}\nURL sub-stream: ${(camera.subStreamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\n${force ? 'O stream principal (alta qualidade) não pôde ser aberto — comum em câmera 8MP via WiFi.' : `O stream de alta qualidade travou ${stalls}x.`} Usando o sub-stream como fallback. A alta qualidade será tentada de novo mais tarde, NA MESMA puxada (sem abrir uma 2ª sessão RTSP na câmera).`,
+          `Câmera: ${name}\nIP: ${camera.ip}:${camera.port}\nQualidade preferida: ${state.preferredQuality}\nNova qualidade: ${nextQuality}\nStalls consecutivos: ${stalls}\nURL sub-stream: ${subUrl.replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\n${force ? 'O stream principal (alta qualidade) não pôde ser aberto — comum em câmera 8MP via WiFi.' : `O stream de alta qualidade travou ${stalls}x.`} Usando o sub-stream como fallback. A alta qualidade será tentada de novo mais tarde, NA MESMA puxada (sem abrir uma 2ª sessão RTSP na câmera).`,
           'streaming',
         );
         this.notifier?.({ cameraId: state.cameraId, status: 'error', error: 'Alta qualidade indisponível. Tentando baixa…' });
@@ -1074,7 +1092,8 @@ Se esta câmera vigia uma cena genuinamente imóvel, aumente SVL_FROZEN_TIMEOUT_
           `Câmera: ${name}\nIP: ${camera?.ip || '—'}:${camera?.port || '—'}\nUsuário: ${camera?.username || '—'}\nURL: ${(camera?.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nQualidade atual: ${state.quality}\n\nO stream estava rodando e caiu subitamente. Causas possíveis: queda de rede, câmera reiniciou, ou timeout.`,
           'streaming',
         );
-        // Se estava em high e caiu, tenta failover para low
+        // Queda conta como falha: com MAX_STALLS_BEFORE_FAILOVER = 1 o sub-stream assume já.
+        state.stallCount = (state.stallCount || 0) + 1;
         if (state.quality === 'high' && attemptFailoverToLow()) return;
       }
 

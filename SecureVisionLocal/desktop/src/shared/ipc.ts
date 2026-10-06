@@ -1,5 +1,6 @@
 // Contrato da API exposta pelo main process ao renderer via contextBridge.
 // É a única superfície que a UI usa para falar com o núcleo (Node.js).
+import type { StreamVerifyResult } from './types';
 import type {
   Camera,
   CreateCameraDTO,
@@ -41,6 +42,7 @@ export const IPC = {
   camerasTest: 'cameras:test',
   camerasVideoOptions: 'cameras:video-options',
   camerasSetResolution: 'cameras:set-resolution',
+  camerasVerifyStreams: 'cameras:verify-streams',
   discoveryScan: 'discovery:scan',
   onvifProbe: 'onvif:probe',
   streamStart: 'stream:start',
@@ -106,6 +108,10 @@ export interface SvlApi {
     test: (id: string) => Promise<ConnectionTestResult>;
     videoOptions: (id: string) => Promise<VideoEncoderInfo>;
     setResolution: (id: string, resolution: VideoResolution) => Promise<boolean>;
+    // Cadastro: testa o HD e acha o SD (sequencial, nunca 2 sessões na câmera).
+    verifyStreams: (
+      data: Pick<CreateCameraDTO, 'ip' | 'port' | 'username' | 'password' | 'streamUrl' | 'subStreamUrl'>,
+    ) => Promise<StreamVerifyResult>;
   };
   discovery: {
     scan: (opts?: { timeoutMs?: number; subnet?: string }) => Promise<DiscoveredCamera[]>;
@@ -190,7 +196,12 @@ export interface SvlApi {
   events: {
     onCameraStatus: (cb: (p: { cameraId: string; status: string }) => void) => () => void;
     onStreamStatus: (
-      cb: (p: { cameraId: string; status: 'running' | 'error'; error?: string }) => void,
+      cb: (p: {
+        cameraId: string;
+        status: 'running' | 'error';
+        error?: string;
+        quality?: 'low' | 'high';
+      }) => void,
     ) => () => void;
   };
 }

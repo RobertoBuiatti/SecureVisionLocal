@@ -110,6 +110,17 @@ export interface StreamInfo {
   wsPort: number; // porta do WebSocket onde o vídeo (MPEG-TS) é transmitido
   status: 'starting' | 'running' | 'error' | 'stopped';
   error?: string;
+  quality?: 'low' | 'high'; // qualidade atual da puxada única (main=high, sub=low)
+}
+
+// Resultado da verificação de streams no cadastro (HD + SD testados de verdade).
+export interface StreamVerifyResult {
+  streamUrl?: string; // URL do HD que respondeu
+  subStreamUrl?: string; // URL do SD que respondeu (menor que o HD)
+  main?: { width: number; height: number; codec: string };
+  sub?: { width: number; height: number; codec: string };
+  tested: string[]; // cada URL testada (credenciais mascaradas) e o resultado
+  error?: string;
 }
 
 export interface SystemStatus {

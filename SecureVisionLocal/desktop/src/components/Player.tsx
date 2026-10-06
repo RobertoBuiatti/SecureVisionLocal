@@ -1,6 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import JSMpeg, { Player as JSMpegPlayer } from '@cycjimmy/jsmpeg-player';
 
+// Todo `new JSMpeg.Player` chama WebGLRenderer.IsSupported(), que cria um canvas descartável
+// com um contexto WebGL só para testar suporte. Com o decoder sendo recriado a cada queda do
+// stream, essas sondas passam de 16 e o Chrome descarta o contexto do canvas REAL ("Too many
+// active WebGL contexts") — a partir daí toda remontagem falha e a tela fica preta até o
+// reload. O Electron sempre tem WebGL; a sonda é dispensável.
+// (os tipos do pacote não declaram `Renderer`, mas o objeto existe em runtime)
+(
+  JSMpeg as unknown as { Renderer: { WebGL: { IsSupported: () => boolean } } }
+).Renderer.WebGL.IsSupported = () => true;
+
 // Recria o decoder se nenhum quadro for desenhado neste intervalo. Rede de segurança para
 // travamentos que o backend não reporta (ex.: quadros descartados por buffer cheio do
 // WebSocket — ver WS_MAX_BUFFERED_BYTES em streaming.ts).
@@ -22,6 +32,9 @@ export function Player({ cameraId }: { cameraId: string }) {
   // (e não `connecting`) é o que decide escondê-lo: `connecting` já é falso quando o
   // watchdog de quadros ou a volta da bandeja recriam o decoder, e aí o branco aparecia.
   const [hasImage, setHasImage] = useState(false);
+  // Qual puxada está no ar (main=HD / sub=SD). O backend troca sozinho quando o HD cai
+  // (failover em streaming.ts); o selo só mostra qual é a imagem que está sendo exibida.
+  const [quality, setQuality] = useState<'low' | 'high' | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -48,24 +61,32 @@ export function Player({ cameraId }: { cameraId: string }) {
       gotFrame = false;
       lastFrameAt = Date.now();
       setHasImage(false); // esconde o canvas branco até o 1º quadro DESTA montagem
-      playerRef.current = new JSMpeg.Player(wsUrl, {
-        canvas: canvasRef.current,
-        audio: false,
-        autoplay: true,
-        // Fica false de propósito: a visibilidade é tratada no onVisibility abaixo, e o
-        // listener que o jsmpeg registraria NÃO é removido no destroy() dele — vazaria um
-        // a cada recriação do decoder.
-        pauseWhenHidden: false,
-        onVideoDecode: () => {
-          // Só no 1º quadro: isto roda 25x/s por câmera, e um setState por quadro
-          // derrubaria o renderer inteiro.
-          if (!gotFrame) {
-            gotFrame = true;
-            setHasImage(true);
-          }
-          lastFrameAt = Date.now();
-        },
-      });
+      // Se o construtor lançar (ex.: contexto WebGL perdido), o player antigo já foi
+      // destruído: zera a ref para a próxima tentativa não chamar destroy() de novo nele,
+      // e o watchdog continua armado para tentar de novo.
+      playerRef.current = null;
+      try {
+        playerRef.current = new JSMpeg.Player(wsUrl, {
+          canvas: canvasRef.current,
+          audio: false,
+          autoplay: true,
+          // Fica false de propósito: a visibilidade é tratada no onVisibility abaixo, e o
+          // listener que o jsmpeg registraria NÃO é removido no destroy() dele — vazaria um
+          // a cada recriação do decoder.
+          pauseWhenHidden: false,
+          onVideoDecode: () => {
+            // Só no 1º quadro: isto roda 25x/s por câmera, e um setState por quadro
+            // derrubaria o renderer inteiro.
+            if (!gotFrame) {
+              gotFrame = true;
+              setHasImage(true);
+            }
+            lastFrameAt = Date.now();
+          },
+        });
+      } catch (e) {
+        console.error('[player] falha ao criar o decoder jsmpeg:', e);
+      }
     }
 
     // Recebe o status do stream (running / erro) vindo do núcleo.
@@ -75,6 +96,7 @@ export function Player({ cameraId }: { cameraId: string }) {
         streamRunning = true;
         setConnecting(false);
         setError(null);
+        if (p.quality) setQuality(p.quality);
         // Voltou de uma queda (ou de um restart do FFmpeg): o decoder atual está preso no
         // stream antigo. Sem isto a imagem fica congelada até trocar de tela e voltar.
         if (wasDown) {
@@ -98,6 +120,7 @@ export function Player({ cameraId }: { cameraId: string }) {
         // sessão), então o estado tem de ser semeado aqui.
         streamRunning = info.status === 'running';
         if (streamRunning) setConnecting(false);
+        if (info.quality) setQuality(info.quality);
         wsUrl = `ws://localhost:${info.wsPort}`;
         mountJsmpeg();
       } catch (e) {
@@ -172,6 +195,11 @@ export function Player({ cameraId }: { cameraId: string }) {
           montagem do decoder (watchdog de quadros, volta da bandeja), não só a primeira —
           por isso quem manda aqui é o `hasImage`, e não o `connecting`. */}
       <canvas ref={canvasRef} className={hasImage ? 'player-canvas' : 'player-canvas idle'} />
+      {hasImage && quality && (
+        <span className="player-quality" title={quality === 'low' ? 'Sub-stream' : 'Stream principal'}>
+          {quality === 'low' ? 'SD' : 'HD'}
+        </span>
+      )}
       {error && <div className="player-error">⚠ {error}</div>}
       {!error && connecting && <div className="player-connecting">Conectando…</div>}
     </div>

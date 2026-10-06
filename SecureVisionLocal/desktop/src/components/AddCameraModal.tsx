@@ -27,6 +27,8 @@ export function AddCameraModal({ prefill, onClose }: AddCameraModalProps) {
   const [probing, setProbing] = useState(false);
   const [probeMsg, setProbeMsg] = useState<string | null>(null);
   const [saveErr, setSaveErr] = useState<string | null>(null);
+  // Verificação HD/SD falhou ou não achou SD: o 2º clique salva mesmo assim.
+  const [force, setForce] = useState(false);
 
   function set<K extends keyof CreateCameraDTO>(key: K, value: CreateCameraDTO[K]) {
     setForm((f) => ({ ...f, [key]: value }));
@@ -84,7 +86,42 @@ export function AddCameraModal({ prefill, onClose }: AddCameraModalProps) {
     setSaving(true);
     setSaveErr(null);
     try {
-      const camera = await window.svl.cameras.add({ ...form, streamUrl: buildStreamUrl() });
+      let streamUrl = buildStreamUrl();
+      let subStreamUrl = form.subStreamUrl;
+      if (!force) {
+        // Testa o HD e procura o SD na câmera ANTES de salvar: com os dois cadastrados o
+        // backend troca sozinho para o SD quando o HD cai (failover em streaming.ts).
+        setProbeMsg('Verificando streams HD e SD na câmera… (pode levar até 1 min)');
+        const v = await window.svl.cameras.verifyStreams({
+          ip: form.ip,
+          port: form.port,
+          username: form.username,
+          password: form.password,
+          streamUrl,
+          subStreamUrl,
+        });
+        if (!v.streamUrl) {
+          setProbeMsg(null);
+          setForce(true);
+          setSaveErr(
+            `Nenhum stream respondeu (${v.tested.length} URL(s) testada(s)). Confira IP, usuário e senha — ou clique em "Adicionar mesmo assim".`,
+          );
+          return;
+        }
+        streamUrl = v.streamUrl;
+        subStreamUrl = v.subStreamUrl ?? subStreamUrl;
+        if (!v.sub) {
+          setForce(true);
+          setProbeMsg(
+            `✓ HD ${v.main?.width}x${v.main?.height} OK, mas nenhum SD respondeu — a troca automática HD→SD fica desligada. Clique em "Adicionar mesmo assim" ou informe a URL do SD depois em Editar câmera.`,
+          );
+          return;
+        }
+        setProbeMsg(
+          `✓ HD ${v.main?.width}x${v.main?.height} · SD ${v.sub.width}x${v.sub.height} — troca automática ativa.`,
+        );
+      }
+      const camera = await window.svl.cameras.add({ ...form, streamUrl, subStreamUrl });
       addCamera(camera);
       onClose();
     } catch (err) {
@@ -180,7 +217,7 @@ export function AddCameraModal({ prefill, onClose }: AddCameraModalProps) {
             Cancelar
           </button>
           <button className="btn primary" onClick={handleSave} disabled={saving || !form.ip}>
-            {saving ? 'Salvando...' : 'Adicionar'}
+            {saving ? 'Verificando…' : force ? 'Adicionar mesmo assim' : 'Adicionar'}
           </button>
         </div>
       </div>

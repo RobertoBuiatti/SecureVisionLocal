@@ -16,6 +16,7 @@ import {
 } from '../core/cameraRepository';
 import { discover } from '../core/discovery';
 import { probeOnvifDevice } from '../core/onvifInfo';
+import { verifyCameraStreams, type VerifyInput } from '../core/streamProbe';
 import { getVideoEncoderInfo, setVideoResolution } from '../core/videoEncoder';
 import type { VideoResolution } from '../../src/shared/types';
 import { streamingService } from '../core/streaming';
@@ -80,6 +81,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     recordingManager.applyCamera(camera); // inicia 24/7 se marcado
     return camera;
   });
+  // Cadastro: testa o stream HD e procura o SD de verdade (FFmpeg, 1 pacote), em sequência.
+  ipcMain.handle(IPC.camerasVerifyStreams, (_e, data: VerifyInput) => verifyCameraStreams(data));
   ipcMain.handle(IPC.camerasUpdate, (_e, id: string, updates: Partial<Camera>) => {
     const camera = updateCamera(id, updates);
     if (camera) recordingManager.applyCamera(camera); // liga/desliga 24/7
