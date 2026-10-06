@@ -1038,7 +1038,9 @@ Se esta câmera vigia uma cena genuinamente imóvel, aumente SVL_FROZEN_TIMEOUT_
         // câmera com a lista inteira. Só após várias falhas seguidas volta a varrer.
         if (state.workingUrl) {
           const RESCAN_AFTER_FAILURES = 5;
-          if (state.reconnectCount >= RESCAN_AFTER_FAILURES) {
+          // Só "volta a varrer" se existe o que varrer: URL Xiongmai (credenciais no path)
+          // não tem caminhos alternativos, e o aviso só retestava a mesma URL.
+          if (state.reconnectCount >= RESCAN_AFTER_FAILURES && state.urlCandidates.length > 1) {
             insertCameraLog(
               state.cameraId,
               name,
@@ -1062,7 +1064,7 @@ Se esta câmera vigia uma cena genuinamente imóvel, aumente SVL_FROZEN_TIMEOUT_
           state.cameraId,
           name,
           'error',
-          `Sem sinal da câmera "${name}" — tentativa ${state.urlAttempt + 1}/${state.urlCandidates.length}`,
+          `Sem sinal da câmera "${name}"${state.urlCandidates.length > 1 ? ` — tentativa ${state.urlAttempt + 1}/${state.urlCandidates.length}` : ''}`,
           `Câmera: ${name}\nIP: ${camera?.ip || '—'}:${camera?.port || '—'}\nUsuário: ${camera?.username || '—'}\nURL principal: ${(camera?.streamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nURL secundária: ${(camera?.subStreamUrl || '—').replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\n\nURL testada: ${state.urlCandidates[state.urlAttempt].replace(/\/\/[^:]+:[^@]+@/, '//***:***@')}\nTentativas restantes: ${hasMoreUrls ? state.urlCandidates.length - nextAttempt : 0}\n\nCausa provável: URL incorreta, credenciais inválidas ou câmera desligada/inacessível na rede. O FFmpeg nunca conseguiu receber quadros.${ffmpegError}`,
           'streaming',
         );

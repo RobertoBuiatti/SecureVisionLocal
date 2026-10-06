@@ -68,13 +68,20 @@ function touchTcp(host: string, port: number, timeoutMs: number): Promise<void> 
   return probeReachable(host, port, timeoutMs).then(() => undefined);
 }
 
+// Timeout da sonda de cura. Em Wi-Fi ruim o connect TCP da câmera levou até 4,8s (SYN
+// retransmitido) nos logs de produção; com 1,5s a cura não enxergava a câmera em NENHUM
+// IP e partia para a varredura da sub-rede à toa. As sondas rodam em paralelo, então o
+// custo de esperar mais é limitado a uma rodada.
+const HEAL_PROBE_TIMEOUT_MS = 5000;
+
 // Dentre vários IPs candidatos (mesmo MAC), devolve o PRIMEIRO que responde na porta
-// RTSP. Essencial quando o ARP tem entradas obsoletas: o MAC pode aparecer em 2 IPs
-// (o antigo, já solto pelo DHCP, e o novo), mas só um realmente aceita conexão.
+// RTSP, na ORDEM recebida. Essencial quando o ARP tem entradas obsoletas: o MAC pode
+// aparecer em 2 IPs (o antigo, já solto pelo DHCP, e o novo), mas só um realmente
+// aceita conexão.
 async function firstReachable(ips: string[]): Promise<string | null> {
   if (ips.length === 0) return null;
   const checks = await Promise.all(
-    ips.map(async (ip) => ({ ip, ok: await probeReachable(ip, 554, 1500) })),
+    ips.map(async (ip) => ({ ip, ok: await probeReachable(ip, 554, HEAL_PROBE_TIMEOUT_MS) })),
   );
   return checks.find((c) => c.ok)?.ip ?? null;
 }
@@ -109,12 +116,24 @@ export async function getMacForIp(ip: string): Promise<string | null> {
 // Encontra o IP ATUAL e ACESSÍVEL de um MAC. Junta todos os IPs que casam com o MAC
 // na tabela ARP e devolve o que responde na porta RTSP (descarta entradas obsoletas).
 // Se nenhum responder, varre a sub-rede para popular o ARP e tenta de novo.
-export async function findIpForMac(mac: string): Promise<string | null> {
+//
+// Cura PEGAJOSA: `current` (o host que a câmera usa hoje) é testado em primeiro lugar,
+// e só perde a vez se estiver morto. Uma câmera XM com IP fixo de fábrica (.10) E um
+// lease DHCP no Wi-Fi responde nos DOIS IPs com o mesmo MAC; sem a preferência, cada
+// cura escolhia o IP que respondesse primeiro naquele instante e o app ficava em
+// pingue-pongue .10↔.28 a cada ~20s, matando o FFmpeg no meio do handshake toda vez.
+export async function findIpForMac(mac: string, current?: string): Promise<string | null> {
   const target = normalizeMac(mac);
-  const matches = (table: Map<string, string>): string[] =>
-    Array.from(table.entries())
+  const matches = (table: Map<string, string>): string[] => {
+    const ips = Array.from(table.entries())
       .filter(([, m]) => m === target)
       .map(([ip]) => ip);
+    // Só prioriza o atual se o ARP ainda o atribui a ESTE MAC: um IP devolvido ao DHCP
+    // e entregue a outro dispositivo não pode ganhar a preferência.
+    const i = current ? ips.indexOf(current) : -1;
+    if (i > 0) ips.unshift(...ips.splice(i, 1));
+    return ips;
+  };
 
   const direct = await firstReachable(matches(await readArpTable()));
   if (direct) return direct;

@@ -97,7 +97,8 @@ class ConnectionMonitor {
     if (now - (this.lastHeal.get(camera.id) ?? 0) < HEAL_COOLDOWN_MS) return null;
     this.lastHeal.set(camera.id, now);
 
-    const newIp = await findIpForMac(camera.mac);
+    // Passa o host atual: a cura é pegajosa (só migra se o atual estiver morto).
+    const newIp = await findIpForMac(camera.mac, this.streamHost(camera));
     if (!newIp || newIp === this.streamHost(camera)) return null;
     return this.applyNewHost(camera, newIp, 'reencontrada pelo MAC na rede');
   }
