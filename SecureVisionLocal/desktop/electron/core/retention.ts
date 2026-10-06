@@ -1,4 +1,4 @@
-import { existsSync, unlinkSync, statSync } from 'node:fs';
+import { existsSync, unlinkSync, statSync, statfsSync } from 'node:fs';
 import type { Recording, StorageUsage } from '../../src/shared/types';
 import { getSettings } from './settings';
 import {
@@ -15,6 +15,20 @@ import { pruneCameraLogs } from './cameraLogger';
 import { listSnapshots, deleteOldestSnapshot, deleteSnapshotsByCamera, countSnapshotsByCamera } from './detectionSnapshotRepository';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+// Piso de espaço livre no disco das gravações. maxStorageGB não conhece o tamanho do disco
+// nem o que mais mora nele: no cliente o D: lotou (ENOSPC) com a retenção "em dia".
+// ponytail: piso fixo; vira configuração se algum cliente precisar de outro valor.
+const MIN_FREE_BYTES = 3 * 1e9;
+
+// Espaço livre no disco que contém `path`. Em erro devolve Infinity: nunca apagar por engano.
+function freeBytesAt(path: string): number {
+  try {
+    const s = statfsSync(path);
+    return s.bfree * s.bsize;
+  } catch {
+    return Infinity;
+  }
+}
 
 // Remove o arquivo de vídeo do disco; retorna true se conseguiu ou o arquivo já não existe.
 function deleteFile(filePath: string): boolean {
@@ -110,6 +124,17 @@ export function enforceRetention(): number {
         removed += 1;
         used -= oldest.fileSize;
       }
+    }
+  }
+
+  // 2b) Piso de espaço livre — enquanto o disco estiver abaixo de MIN_FREE_BYTES, apaga a
+  // mais antiga, independentemente de maxStorageGB.
+  if (settings.autoRecycle) {
+    let guard = 5000;
+    while (freeBytesAt(settings.recordingsPath) < MIN_FREE_BYTES && guard-- > 0) {
+      const [oldest] = listRetentionCandidates(1);
+      if (!oldest || !deleteFull(oldest)) break;
+      removed += 1;
     }
   }
 

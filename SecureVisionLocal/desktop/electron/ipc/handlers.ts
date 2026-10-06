@@ -78,7 +78,23 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   ipcMain.handle(IPC.camerasList, () => listCameras());
   ipcMain.handle(IPC.camerasAdd, (_e, data: CreateCameraDTO) => {
     const camera = addCamera(data);
-    recordingManager.applyCamera(camera); // inicia 24/7 se marcado
+    // A câmera JÁ está no banco. Se a gravação 24/7 não puder iniciar agora (ex.: ENOSPC ao
+    // criar a pasta em disco cheio), o cadastro ainda é válido — antes o erro subia para a
+    // UI, a lista não atualizava e o 2º cadastro era bloqueado como duplicado.
+    try {
+      recordingManager.applyCamera(camera); // inicia 24/7 se marcado
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('[cameras] gravação 24/7 não iniciou no cadastro:', msg);
+      insertCameraLog(
+        camera.id,
+        camera.name,
+        'error',
+        `Gravação 24/7 de "${camera.name}" não iniciou no cadastro`,
+        `Câmera: ${camera.name}\nErro: ${msg}\n\nA câmera foi cadastrada. O ciclo de gravação tenta de novo a cada 30s; se for falta de espaço em disco, a retenção libera espaço antes.`,
+        'recording',
+      );
+    }
     return camera;
   });
   // Cadastro: testa o stream HD e procura o SD de verdade (FFmpeg, 1 pacote), em sequência.

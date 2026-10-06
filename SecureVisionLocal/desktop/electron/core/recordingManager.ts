@@ -51,11 +51,18 @@ class RecordingManager {
   }
 
   private tick(): void {
-    this.reconcile();
+    // Retenção PRIMEIRO e independente do reconcile. Na ordem antiga, com o disco cheio, o
+    // mkdir da pasta de uma câmera nova lançava ENOSPC dentro do reconcile e a retenção era
+    // pulada em TODOS os tiques — o disco nunca mais era liberado.
     try {
       enforceRetention();
-    } catch {
-      /* não interrompe o ciclo se a retenção falhar */
+    } catch (e) {
+      console.error('[recording] retenção falhou:', e);
+    }
+    try {
+      this.reconcile();
+    } catch (e) {
+      console.error('[recording] reconcile falhou:', e);
     }
   }
 
@@ -65,20 +72,29 @@ class RecordingManager {
   private reconcile(): void {
     const cams = listCameras();
     for (const camera of cams) {
-      const dir = recordingCameraDir(camera.id);
-      // Duplicata do mesmo dispositivo: não grava (evita 2ª puxada RTSP na câmera). Só o
-      // cadastro principal grava; assim não há contenção de sessão / lag.
-      if (isDuplicateShadow(camera, cams)) {
-        void streamingService.setRecording(camera, false, '', 0);
-        continue;
+      try {
+        this.reconcileCamera(camera, cams);
+      } catch (e) {
+        // Ex.: ENOSPC ao criar a pasta desta câmera. Não derruba as outras nem o tique.
+        console.error(`[recording] reconcile de "${camera.name}" falhou:`, e);
       }
-      if (shouldRecordContinuous(camera)) {
-        void streamingService.setRecording(camera, true, dir, this.segmentSeconds());
-        continuousRecordingService.indexSegments(camera.id, camera.name, dir, true);
-      } else {
-        void streamingService.setRecording(camera, false, '', 0);
-        continuousRecordingService.indexSegments(camera.id, camera.name, dir, false);
-      }
+    }
+  }
+
+  private reconcileCamera(camera: Camera, cams: Camera[]): void {
+    const dir = recordingCameraDir(camera.id);
+    // Duplicata do mesmo dispositivo: não grava (evita 2ª puxada RTSP na câmera). Só o
+    // cadastro principal grava; assim não há contenção de sessão / lag.
+    if (isDuplicateShadow(camera, cams)) {
+      void streamingService.setRecording(camera, false, '', 0);
+      return;
+    }
+    if (shouldRecordContinuous(camera)) {
+      void streamingService.setRecording(camera, true, dir, this.segmentSeconds());
+      continuousRecordingService.indexSegments(camera.id, camera.name, dir, true);
+    } else {
+      void streamingService.setRecording(camera, false, '', 0);
+      continuousRecordingService.indexSegments(camera.id, camera.name, dir, false);
     }
   }
 }
