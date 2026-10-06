@@ -26,6 +26,11 @@ type MotionAttach = DetectionAttach;
 type MotionDetach = DetectionDetach;
 
 const RECONNECT_DELAY_MS = 3000;
+// Qualidade com que a puxada ABRE, pelo cadastro: 'low' fixo abre no sub-stream; 'auto' e
+// 'high' abrem no HD (a diferença é que só o 'auto' pode cair para SD — ver failover).
+function preferredQualityFor(camera: Camera): 'low' | 'high' {
+  return camera.streamQuality === 'low' ? 'low' : 'high';
+}
 // Faixa de portas dos WebSockets de vídeo. Bind SOMENTE em loopback: o consumidor é o
 // jsmpeg do próprio renderer (ws://localhost). Expor na LAN vazaria o vídeo sem token.
 const WS_HOST = '127.0.0.1';
@@ -329,10 +334,7 @@ export class StreamingService {
   // câmeras com poucas sessões, ex.: Xiongmai). Liga a puxada se preciso e aguarda um
   // primeiro quadro fresco (até ~6s). Idempotente por câmera.
   async retainForCapture(camera: Camera): Promise<void> {
-    const st = await this.ensureState(
-      camera,
-      this.streams.get(camera.id)?.preferredQuality ?? 'high',
-    );
+    const st = await this.ensureState(camera, preferredQualityFor(camera));
     st.verify = true;
     if (!st.ffmpeg) this.spawnCameraFfmpeg(st);
     for (let i = 0; i < 20; i++) {
@@ -391,7 +393,8 @@ export class StreamingService {
   }
 
   // Visualização ao vivo: anexa um espectador à puxada única (inicia-a se preciso).
-  async start(camera: Camera, quality: 'low' | 'high' = 'high'): Promise<StreamInfo> {
+  async start(camera: Camera): Promise<StreamInfo> {
+    const quality = preferredQualityFor(camera);
     const state = await this.ensureState(camera, quality);
     state.viewerActive = true;
     state.preferredQuality = quality;
@@ -434,10 +437,7 @@ export class StreamingService {
       else this.reconfigure(st);
       return;
     }
-    const st = await this.ensureState(
-      camera,
-      this.streams.get(camera.id)?.preferredQuality ?? 'high',
-    );
+    const st = await this.ensureState(camera, preferredQualityFor(camera));
     if (st.record && st.recDir === dir) {
       if (!st.ffmpeg) this.spawnCameraFfmpeg(st);
       return; // já gravando neste diretório
@@ -460,10 +460,7 @@ export class StreamingService {
       else this.reconfigure(st);
       return;
     }
-    const st = await this.ensureState(
-      camera,
-      this.streams.get(camera.id)?.preferredQuality ?? 'high',
-    );
+    const st = await this.ensureState(camera, preferredQualityFor(camera));
     const sameConfig = st.detect && JSON.stringify(st.detectConfig) === JSON.stringify(config);
     if (sameConfig) {
       if (!st.ffmpeg) this.spawnCameraFfmpeg(st);
@@ -486,10 +483,7 @@ export class StreamingService {
       else this.reconfigure(st);
       return;
     }
-    const st = await this.ensureState(
-      camera,
-      this.streams.get(camera.id)?.preferredQuality ?? 'high',
-    );
+    const st = await this.ensureState(camera, preferredQualityFor(camera));
     const sameConfig = st.motion && JSON.stringify(st.motionConfig) === JSON.stringify(config);
     if (sameConfig) {
       if (!st.ffmpeg) this.spawnCameraFfmpeg(st);
@@ -542,6 +536,24 @@ export class StreamingService {
     const state = this.streams.get(camera.id);
     if (!state || state.isFile) return;
     state.camera = camera;
+    // Qualidade do cadastro mudou (auto/HD/SD): aplica agora. Com qualidade FIXA a puxada
+    // tem de estar nela; no 'auto' basta a preferência (HD) estar certa — se já caiu para SD
+    // por failover, continua em SD e volta ao HD pelo scheduleHighRetry.
+    const pref = preferredQualityFor(camera);
+    const mustSwitch =
+      camera.streamQuality === 'auto' ? state.preferredQuality !== pref : state.quality !== pref;
+    if (mustSwitch) {
+      state.quality = pref;
+      state.failoverActive = false;
+      state.highAttempt = 0;
+      state.stallCount = 0;
+      state.workingUrl = undefined;
+      if (state.highTimer) {
+        clearTimeout(state.highTimer);
+        state.highTimer = undefined;
+      }
+    }
+    state.preferredQuality = pref;
     state.urlCandidates = this.buildUrlCandidates(camera, state.quality);
     state.urlAttempt = 0;
     state.reconnectCount = 0;
@@ -984,6 +996,7 @@ Se esta câmera vigia uma cena genuinamente imóvel, aumente SVL_FROZEN_TIMEOUT_
         const subUrl = subStreamUrlFor(camera);
         if (!subUrl) return false;
         if (state.quality === 'low') return false; // já está em low
+        if (camera.streamQuality === 'high') return false; // HD fixo pelo cadastro: nunca cai p/ SD
         if (state.failoverActive) return false; // já tentou failover
         const stalls = state.stallCount || 0;
         if (!force && stalls < MAX_STALLS_BEFORE_FAILOVER) return false; // não atingiu threshold

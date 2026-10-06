@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Camera, VideoEncoderInfo, VideoResolution } from '../shared/types';
+import type { Camera, StreamQuality, VideoEncoderInfo, VideoResolution } from '../shared/types';
 import { useStore } from '../store';
 
 interface EditCameraModalProps {
@@ -125,6 +125,7 @@ export function EditCameraModal({ camera, onClose }: EditCameraModalProps) {
         hasAudio: form.hasAudio,
         hasOnboardTracking: form.hasOnboardTracking,
         recordContinuous: form.recordContinuous,
+        streamQuality: form.streamQuality,
       });
       onClose();
     } finally {
@@ -190,6 +191,17 @@ export function EditCameraModal({ camera, onClose }: EditCameraModalProps) {
             placeholder="rtsp://usuario:senha@ip:554/substream"
             onChange={(e) => set('subStreamUrl', e.target.value)}
           />
+        </label>
+        <label>
+          Qualidade do vídeo
+          <select
+            value={form.streamQuality ?? 'auto'}
+            onChange={(e) => set('streamQuality', e.target.value as StreamQuality)}
+          >
+            <option value="auto">Automática — HD, cai para SD se a conexão piorar (recomendado)</option>
+            <option value="high">Sempre alta (HD / stream principal)</option>
+            <option value="low">Sempre baixa (SD / substream) — ideal em Wi-Fi fraco</option>
+          </select>
         </label>
         {videoInfo?.supported && videoInfo.resolutions.length > 0 && (
           <label>

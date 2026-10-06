@@ -3,7 +3,7 @@ import { getDb } from './db';
 import { encryptSecret, decryptSecret, decryptSecretLegacy, isEncrypted, PREFIX_V1 } from './secrets';
 import { normalizeMac, rewriteRtspHost } from './ipResolver';
 import { insertCameraLog } from './cameraLogger';
-import type { Camera, CreateCameraDTO, CameraType } from '../../src/shared/types';
+import type { Camera, CreateCameraDTO, CameraType, StreamQuality } from '../../src/shared/types';
 
 // Linha do SQLite (inteiros para booleanos) → objeto de domínio.
 interface CameraRow {
@@ -27,6 +27,7 @@ interface CameraRow {
   hasOnboardTracking: number | null;
   presetCount: number;
   recordContinuous: number;
+  streamQuality: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -55,6 +56,7 @@ function rowToCamera(r: CameraRow): Camera {
     hasOnboardTracking: !!r.hasOnboardTracking,
     presetCount: r.presetCount,
     recordContinuous: !!r.recordContinuous,
+    streamQuality: (r.streamQuality as StreamQuality | null) ?? 'auto',
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
   };
@@ -154,6 +156,7 @@ export function addCamera(dto: CreateCameraDTO): Camera {
     hasOnboardTracking: dto.hasOnboardTracking ?? false,
     presetCount: 0,
     recordContinuous: dto.recordContinuous ?? false,
+    streamQuality: dto.streamQuality ?? 'auto',
     createdAt: now,
     updatedAt: now,
   };
@@ -163,11 +166,11 @@ export function addCamera(dto: CreateCameraDTO): Camera {
       `INSERT INTO cameras
         (id, name, ip, port, protocol, type, manufacturer, username, password,
          streamUrl, subStreamUrl, onvifProfile, onvifPort, mac, status, hasPTZ, hasAudio,
-         hasOnboardTracking, presetCount, recordContinuous, createdAt, updatedAt)
+         hasOnboardTracking, presetCount, recordContinuous, streamQuality, createdAt, updatedAt)
        VALUES
         (@id, @name, @ip, @port, @protocol, @type, @manufacturer, @username, @password,
          @streamUrl, @subStreamUrl, @onvifProfile, @onvifPort, @mac, @status, @hasPTZ, @hasAudio,
-         @hasOnboardTracking, @presetCount, @recordContinuous, @createdAt, @updatedAt)`,
+         @hasOnboardTracking, @presetCount, @recordContinuous, @streamQuality, @createdAt, @updatedAt)`,
     )
     .run({
       ...camera,
@@ -201,7 +204,8 @@ export function updateCamera(id: string, updates: Partial<Camera>): Camera | nul
         streamUrl=@streamUrl, subStreamUrl=@subStreamUrl, onvifProfile=@onvifProfile,
         onvifPort=@onvifPort, mac=@mac, status=@status, hasPTZ=@hasPTZ, hasAudio=@hasAudio,
         hasOnboardTracking=@hasOnboardTracking,
-        presetCount=@presetCount, recordContinuous=@recordContinuous, updatedAt=@updatedAt
+        presetCount=@presetCount, recordContinuous=@recordContinuous, streamQuality=@streamQuality,
+        updatedAt=@updatedAt
        WHERE id=@id`,
     )
     .run({

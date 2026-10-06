@@ -100,8 +100,16 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   // Cadastro: testa o stream HD e procura o SD de verdade (FFmpeg, 1 pacote), em sequência.
   ipcMain.handle(IPC.camerasVerifyStreams, (_e, data: VerifyInput) => verifyCameraStreams(data));
   ipcMain.handle(IPC.camerasUpdate, (_e, id: string, updates: Partial<Camera>) => {
+    const before = getCamera(id);
     const camera = updateCamera(id, updates);
     if (camera) recordingManager.applyCamera(camera); // liga/desliga 24/7
+    // Puxada ativa pega URL/credenciais/qualidade novas na hora (antes só no próximo reinício).
+    // SÓ quando algo que a puxada usa mudou: o toggle 24/7 já é aplicado pelo applyCamera, e
+    // um 2º reinício em sequência abriria duas sessões RTSP seguidas na câmera.
+    const streamKeys = ['streamUrl', 'subStreamUrl', 'username', 'password', 'ip', 'port', 'streamQuality'] as const;
+    if (camera && before && streamKeys.some((k) => before[k] !== camera[k])) {
+      streamingService.refreshCamera(camera);
+    }
     disconnectCamera(id); // invalida sessão ONVIF (IP/credenciais podem ter mudado)
     return camera;
   });
@@ -158,8 +166,8 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   ipcMain.handle(IPC.streamStart, (_e, cameraId: string) => {
     const camera = getCamera(cameraId);
     if (!camera) throw new Error('Câmera não encontrada');
-    // Sempre tenta alta qualidade primeiro; failover automático para low se cair
-    return streamingService.start(camera, 'high');
+    // Qualidade vem do cadastro (auto/HD/SD); no auto o failover para SD é automático.
+    return streamingService.start(camera);
   });
   ipcMain.handle(IPC.streamStop, (_e, cameraId: string) => streamingService.viewerStop(cameraId));
 

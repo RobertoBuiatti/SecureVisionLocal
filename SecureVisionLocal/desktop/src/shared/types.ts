@@ -4,7 +4,10 @@
 export type CameraProtocol = 'rtsp' | 'onvif' | 'http' | 'mjpeg' | 'rtmp' | 'hls';
 export type CameraStatus = 'online' | 'offline' | 'error' | 'connecting';
 export type CameraType = 'ptz' | 'dome' | 'bullet' | 'cube' | 'fisheye';
-export type StreamQuality = 'low' | 'medium' | 'high';
+
+// Qualidade da puxada: 'auto' = HD com queda automática para SD quando a conexão falha
+// (e retorno ao HD depois); 'high'/'low' = fixa.
+export type StreamQuality = 'auto' | 'high' | 'low';
 
 export interface Camera {
   id: string;
@@ -27,6 +30,7 @@ export interface Camera {
   hasOnboardTracking: boolean; // a câmera segue objetos sozinha (auto-track no firmware)
   presetCount: number;
   recordContinuous: boolean;
+  streamQuality: StreamQuality;
   createdAt: number;
   updatedAt: number;
 }
@@ -48,6 +52,7 @@ export interface CreateCameraDTO {
   hasAudio?: boolean;
   hasOnboardTracking?: boolean;
   recordContinuous?: boolean;
+  streamQuality?: StreamQuality;
 }
 
 // ---- Resolução do encoder (ONVIF) ----

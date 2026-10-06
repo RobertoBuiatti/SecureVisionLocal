@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { CreateCameraDTO, DiscoveredCamera } from '../shared/types';
+import type { CreateCameraDTO, DiscoveredCamera, StreamQuality } from '../shared/types';
 import { useStore } from '../store';
 
 interface AddCameraModalProps {
@@ -22,6 +22,7 @@ export function AddCameraModal({ prefill, onClose }: AddCameraModalProps) {
     streamUrl: defaultRtsp,
     hasPTZ: false,
     recordContinuous: false,
+    streamQuality: 'auto',
   });
   const [saving, setSaving] = useState(false);
   const [probing, setProbing] = useState(false);
@@ -182,6 +183,17 @@ export function AddCameraModal({ prefill, onClose }: AddCameraModalProps) {
             placeholder="rtsp://usuario:senha@ip:554/stream"
             onChange={(e) => set('streamUrl', e.target.value)}
           />
+        </label>
+        <label>
+          Qualidade do vídeo
+          <select
+            value={form.streamQuality ?? 'auto'}
+            onChange={(e) => set('streamQuality', e.target.value as StreamQuality)}
+          >
+            <option value="auto">Automática — HD, cai para SD se a conexão piorar (recomendado)</option>
+            <option value="high">Sempre alta (HD / stream principal)</option>
+            <option value="low">Sempre baixa (SD / substream) — ideal em Wi-Fi fraco</option>
+          </select>
         </label>
         <div className="row checks">
           <label className="check">
